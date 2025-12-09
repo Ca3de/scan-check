@@ -94,8 +94,9 @@
       endMinuteIntraday: '0'
     });
 
-    // Match FCLM URL pattern with ?& at start
-    const url = `/employee/timeDetails?&${params.toString()}`;
+    // Match FCLM URL pattern with ?& at start - use absolute URL
+    const baseUrl = window.location.origin || 'https://fclm-portal.amazon.com';
+    const url = `${baseUrl}/employee/timeDetails?&${params.toString()}`;
     log(`Fetching URL: ${url}`);
 
     try {
