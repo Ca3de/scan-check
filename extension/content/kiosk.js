@@ -1011,6 +1011,23 @@
     // Display employee ID and status
     nameDiv.textContent = `Badge: ${data.employeeId}`;
 
+    // Helper to safely build details content
+    function buildDetailsContent(container, elements) {
+      container.textContent = '';
+      elements.forEach(el => {
+        if (typeof el === 'string') {
+          container.appendChild(document.createTextNode(el));
+        } else if (el.tag === 'br') {
+          container.appendChild(document.createElement('br'));
+        } else if (el.tag) {
+          const node = document.createElement(el.tag);
+          if (el.className) node.className = el.className;
+          if (el.text) node.textContent = el.text;
+          container.appendChild(node);
+        }
+      });
+    }
+
     if (mpvCheck.hasMpvRisk) {
       // Show MPV warning - BLOCK this assignment
       infoDiv.classList.add('mpv-warning');
@@ -1022,52 +1039,67 @@
         alertText = '🚫 MPV - TIME LIMIT EXCEEDED!';
       }
 
-      detailsDiv.innerHTML = `
-        <div class="mpv-alert">${alertText}</div>
-        <div class="mpv-details">${mpvCheck.details}</div>
-        ${currentActivity ? `<br>Current: ${currentActivity.title}` : ''}
-      `;
+      const elements = [
+        { tag: 'div', className: 'mpv-alert', text: alertText },
+        { tag: 'div', className: 'mpv-details', text: mpvCheck.details }
+      ];
+      if (currentActivity) {
+        elements.push({ tag: 'br' }, `Current: ${currentActivity.title}`);
+      }
+      buildDetailsContent(detailsDiv, elements);
       showPanelMessage('🚫 MPV Risk - Cannot assign!', 'error');
 
     } else if (mpvCheck.targetPath && mpvCheck.remainingTime) {
       // Same restricted path, under limit - show remaining time
       infoDiv.classList.add('mpv-ok');
-      detailsDiv.innerHTML = `
-        <div class="mpv-ok-alert">✓ OK - Same path, time remaining</div>
-        <strong>${mpvCheck.targetPath}</strong><br>
-        Used: ${formatMinutes(mpvCheck.currentTime)} | Remaining: ${formatMinutes(mpvCheck.remainingTime)}
-        ${currentActivity ? `<br>Current: ${currentActivity.title}` : ''}
-      `;
+      const elements = [
+        { tag: 'div', className: 'mpv-ok-alert', text: '✓ OK - Same path, time remaining' },
+        { tag: 'strong', text: mpvCheck.targetPath },
+        { tag: 'br' },
+        `Used: ${formatMinutes(mpvCheck.currentTime)} | Remaining: ${formatMinutes(mpvCheck.remainingTime)}`
+      ];
+      if (currentActivity) {
+        elements.push({ tag: 'br' }, `Current: ${currentActivity.title}`);
+      }
+      buildDetailsContent(detailsDiv, elements);
       showPanelMessage(`✓ OK - ${formatMinutes(mpvCheck.remainingTime)} remaining`, 'success');
 
     } else if (mpvCheck.targetPath && mpvCheck.workedPaths.length === 0) {
       // First time on restricted path
       infoDiv.classList.add('mpv-ok');
-      detailsDiv.innerHTML = `
-        <div class="mpv-ok-alert">✓ OK - First time on this path</div>
-        <strong>${mpvCheck.targetPath}</strong><br>
-        Max allowed: ${formatMinutes(MPV_MAX_TIME_MINUTES)}
-        ${currentActivity ? `<br>Current: ${currentActivity.title}` : ''}
-      `;
+      const elements = [
+        { tag: 'div', className: 'mpv-ok-alert', text: '✓ OK - First time on this path' },
+        { tag: 'strong', text: mpvCheck.targetPath },
+        { tag: 'br' },
+        `Max allowed: ${formatMinutes(MPV_MAX_TIME_MINUTES)}`
+      ];
+      if (currentActivity) {
+        elements.push({ tag: 'br' }, `Current: ${currentActivity.title}`);
+      }
+      buildDetailsContent(detailsDiv, elements);
       showPanelMessage('✓ First time on restricted path', 'success');
 
     } else if (currentActivity) {
       // Non-restricted path with current activity
       const statusClass = isClockedIn ? 'uph' : 'uph low';
-      detailsDiv.innerHTML = `
-        <strong>${currentActivity.title}</strong><br>
-        <span class="${statusClass}">${isClockedIn ? 'Active' : 'Inactive'}</span> |
-        Duration: ${currentActivity.duration || 'ongoing'}
-      `;
+      buildDetailsContent(detailsDiv, [
+        { tag: 'strong', text: currentActivity.title },
+        { tag: 'br' },
+        { tag: 'span', className: statusClass, text: isClockedIn ? 'Active' : 'Inactive' },
+        ` | Duration: ${currentActivity.duration || 'ongoing'}`
+      ]);
       showPanelMessage('✓ Ready to assign', 'success');
 
     } else if (data.sessions.length > 0) {
       // Non-restricted path, show last session
       const lastSession = data.sessions[data.sessions.length - 1];
-      detailsDiv.innerHTML = `
-        Last: <strong>${lastSession.title}</strong><br>
-        ${data.hoursOnTask ? `Hours: ${data.hoursOnTask.toFixed(1)}h` : `Sessions: ${data.sessions.length}`}
-      `;
+      const hoursText = data.hoursOnTask ? `Hours: ${data.hoursOnTask.toFixed(1)}h` : `Sessions: ${data.sessions.length}`;
+      buildDetailsContent(detailsDiv, [
+        'Last: ',
+        { tag: 'strong', text: lastSession.title },
+        { tag: 'br' },
+        hoursText
+      ]);
       showPanelMessage('✓ Ready to assign', 'info');
 
     } else {
