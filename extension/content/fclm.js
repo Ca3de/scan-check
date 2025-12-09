@@ -79,10 +79,11 @@
     log(`Shift range: ${shiftRange.startDate} ${shiftRange.startHour}:00 to ${shiftRange.endDate} ${shiftRange.endHour}:00`);
 
     // Build URL with proper date range parameters for night shift
+    // Note: startDateDay should be the END date (today), based on FCLM URL pattern
     const params = new URLSearchParams({
       employeeId: employeeId,
       warehouseId: CONFIG.WAREHOUSE_ID,
-      startDateDay: shiftRange.startDate,
+      startDateDay: shiftRange.endDate,  // Use END date here (matches FCLM pattern)
       maxIntradayDays: '1',
       spanType: 'Intraday',
       startDateIntraday: shiftRange.startDate,
@@ -93,7 +94,8 @@
       endMinuteIntraday: '0'
     });
 
-    const url = `/employee/timeDetails?${params.toString()}`;
+    // Match FCLM URL pattern with ?& at start
+    const url = `/employee/timeDetails?&${params.toString()}`;
     log(`Fetching URL: ${url}`);
 
     try {
