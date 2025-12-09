@@ -142,65 +142,145 @@
       isClockedIn: false
     };
 
-    // Find all tables in the live DOM
-    const tables = document.querySelectorAll('table');
-    log(`Found ${tables.length} tables in live DOM`);
+    // Target the specific FCLM time details table using its unique selector
+    const targetTable = document.querySelector('table.ganttChart[aria-label="Time Details"]');
 
-    // Look for the time details table with title/start/end/duration columns
-    for (let tableIdx = 0; tableIdx < tables.length; tableIdx++) {
-      const table = tables[tableIdx];
-      const rows = table.querySelectorAll('tr');
+    if (!targetTable) {
+      log('Could not find table.ganttChart[aria-label="Time Details"]', 'warn');
+      // Fallback: try to find any table with ganttChart class
+      const fallbackTable = document.querySelector('table.ganttChart');
+      if (fallbackTable) {
+        log('Found fallback table.ganttChart', 'info');
+        return scrapeGanttTable(fallbackTable, employeeId, result);
+      }
+      log('No ganttChart table found at all', 'error');
+      return result;
+    }
 
-      if (rows.length < 2) continue;
+    log('Found time details table: table.ganttChart[aria-label="Time Details"]', 'success');
+    return scrapeGanttTable(targetTable, employeeId, result);
+  }
 
-      // Check first row for headers
-      const headerRow = rows[0];
-      const headerCells = headerRow.querySelectorAll('th, td');
-      const headerTexts = Array.from(headerCells).map(c => c.textContent?.trim().toLowerCase() || '');
+  // Parse the FCLM gantt chart table structure
+  function scrapeGanttTable(table, employeeId, result) {
+    // Get all rows from tbody (skip thead which has summary and header rows)
+    const tbody = table.querySelector('tbody');
+    const rows = tbody ? tbody.querySelectorAll('tr') : table.querySelectorAll('tr');
 
-      log(`Live DOM Table ${tableIdx}: ${headerCells.length} headers: [${headerTexts.join(', ')}]`);
+    log(`Found ${rows.length} rows in table`);
 
-      // Find column indices
-      let titleIdx = -1, startIdx = -1, endIdx = -1, durationIdx = -1;
-      headerTexts.forEach((text, idx) => {
-        if (text.includes('title')) titleIdx = idx;
-        else if (text.includes('start')) startIdx = idx;
-        else if (text.includes('end')) endIdx = idx;
-        else if (text.includes('duration')) durationIdx = idx;
-      });
+    for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+      const row = rows[rowIdx];
+      const rowClass = row.className || '';
 
-      if (titleIdx >= 0 && startIdx >= 0 && durationIdx >= 0) {
-        log(`Found time details table (table ${tableIdx})`, 'success');
+      // Skip rows that aren't data rows (header rows, summary rows)
+      if (rowClass.includes('totSummary') || row.querySelector('th')) {
+        continue;
+      }
 
-        // Parse data rows
-        for (let rowIdx = 1; rowIdx < rows.length; rowIdx++) {
-          const cells = rows[rowIdx].querySelectorAll('td');
-          if (cells.length > durationIdx) {
-            const title = cells[titleIdx]?.textContent?.trim() || '';
-            const start = cells[startIdx]?.textContent?.trim() || '';
-            const end = endIdx >= 0 ? (cells[endIdx]?.textContent?.trim() || '') : '';
-            const duration = cells[durationIdx]?.textContent?.trim() || '';
+      // Determine row type and parse accordingly
+      // Row types: clock-seg, function-seg, job-seg
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 4) continue;
 
-            if (title && !title.includes('OffClock') && !title.includes('OnClock')) {
-              const session = {
-                title,
-                start,
-                end,
-                duration,
-                durationMinutes: parseDurationToMinutes(duration)
-              };
-              result.sessions.push(session);
-              log(`Parsed: ${title} - ${duration} (${session.durationMinutes} mins)`);
+      let title = '';
+      let start = '';
+      let end = '';
+      let duration = '';
 
-              if (!end || end === '') {
-                result.currentActivity = session;
-                result.isClockedIn = true;
-              }
-            }
-          }
+      if (rowClass.includes('job-seg')) {
+        // Job segment rows have: [trackingType] [title (in <a>)] [start] [end] [duration]
+        // Cell 0: trackingType (e.g., "m")
+        // Cell 1: title with <a> link containing job name
+        // Cell 2: start time
+        // Cell 3: end time
+        // Cell 4: duration
+        const titleLink = cells[1]?.querySelector('a');
+        title = titleLink ? titleLink.textContent.trim() : cells[1]?.textContent?.trim() || '';
+        start = cells[2]?.textContent?.trim() || '';
+        end = cells[3]?.textContent?.trim() || '';
+        duration = cells[4]?.textContent?.trim() || '';
+
+        log(`[job-seg] Row ${rowIdx}: ${title} | ${start} | ${end} | ${duration}`);
+
+      } else if (rowClass.includes('function-seg') || rowClass.includes('clock-seg')) {
+        // Function/Clock segment rows have: [title colspan=2] [start] [end] [duration]
+        // The title cell spans 2 columns, so indices shift:
+        // Cell 0: title (colspan="2", may contain ♦ separator like "C-Returns Support♦C-Returns_StowSweep")
+        // Cell 1: start time
+        // Cell 2: end time
+        // Cell 3: duration
+        let rawTitle = cells[0]?.textContent?.trim() || '';
+
+        // Handle diamond separator (♦ or &diams;) - extract the path name after it
+        if (rawTitle.includes('♦')) {
+          const parts = rawTitle.split('♦');
+          title = parts[parts.length - 1].trim(); // Get the path name (last part)
+        } else {
+          title = rawTitle;
         }
 
-        break; // Found the table, stop searching
+        start = cells[1]?.textContent?.trim() || '';
+        end = cells[2]?.textContent?.trim() || '';
+        duration = cells[3]?.textContent?.trim() || '';
+
+        log(`[${rowClass.includes('function-seg') ? 'function-seg' : 'clock-seg'}] Row ${rowIdx}: ${title} | ${start} | ${end} | ${duration}`);
+
+      } else {
+        // Unknown row type - try generic parsing
+        // Assume: [title] [start] [end] [duration] or [title colspan=2] [start] [end] [duration]
+        const firstCell = cells[0];
+        const colspan = firstCell?.getAttribute('colspan');
+
+        if (colspan === '2') {
+          title = firstCell?.textContent?.trim() || '';
+          start = cells[1]?.textContent?.trim() || '';
+          end = cells[2]?.textContent?.trim() || '';
+          duration = cells[3]?.textContent?.trim() || '';
+        } else {
+          // Check if first cell looks like trackingType (single char like "m")
+          const firstText = firstCell?.textContent?.trim() || '';
+          if (firstText.length <= 2 && cells.length >= 5) {
+            // Likely job-seg style
+            const titleLink = cells[1]?.querySelector('a');
+            title = titleLink ? titleLink.textContent.trim() : cells[1]?.textContent?.trim() || '';
+            start = cells[2]?.textContent?.trim() || '';
+            end = cells[3]?.textContent?.trim() || '';
+            duration = cells[4]?.textContent?.trim() || '';
+          } else {
+            title = firstText;
+            start = cells[1]?.textContent?.trim() || '';
+            end = cells[2]?.textContent?.trim() || '';
+            duration = cells[3]?.textContent?.trim() || '';
+          }
+        }
+        log(`[unknown] Row ${rowIdx}: ${title} | ${start} | ${end} | ${duration}`);
+      }
+
+      // Skip empty titles or clock entries (OnClock/OffClock are not work activities)
+      if (!title || title.includes('OffClock') || title.includes('OnClock')) {
+        continue;
+      }
+
+      // Parse duration - FCLM uses MM:SS format (e.g., "210:35" = 210 mins 35 secs)
+      const durationMinutes = parseDurationToMinutes(duration);
+
+      const session = {
+        title,
+        start,
+        end,
+        duration,
+        durationMinutes,
+        rowType: rowClass.includes('job-seg') ? 'job' : (rowClass.includes('function-seg') ? 'function' : 'other')
+      };
+
+      result.sessions.push(session);
+      log(`Parsed session: ${title} - ${duration} (${durationMinutes} mins)`, 'success');
+
+      // Track current activity (no end time = ongoing)
+      if (!end || end === '') {
+        result.currentActivity = session;
+        result.isClockedIn = true;
       }
     }
 
@@ -261,178 +341,109 @@
       isClockedIn: false
     };
 
-    // First, try to find embedded JSON data in script tags
-    // Many sites embed data that JavaScript renders
-    const scripts = doc.querySelectorAll('script');
-    for (const script of scripts) {
-      const content = script.textContent || '';
-      // Look for JSON data patterns
-      if (content.includes('timeDetails') || content.includes('sessions') || content.includes('activities')) {
-        log(`Found potential data in script tag (${content.length} chars)`);
-        // Try to extract JSON
-        const jsonMatch = content.match(/(?:var|let|const)\s+\w+\s*=\s*(\{[\s\S]*?\});/);
-        if (jsonMatch) {
-          log(`Found JSON pattern in script`);
-        }
-      }
-    }
-
-    // Also search the raw HTML for session-like data patterns
-    // Look for known path names that indicate time entries exist
-    const pathPatterns = ['C-Returns', 'StowSweep', 'EndofLine', 'WaterSpider', 'Vreturns', 'OnClock', 'OffClock'];
-    for (const pattern of pathPatterns) {
-      if (html.includes(pattern)) {
-        log(`Found "${pattern}" in HTML - time data exists`);
-      }
-    }
-
-    // Find the correct table - look for one with "start", "end", "duration" headers
-    // Note: The "title" column may not have a header, it's just the first column
-    const tables = doc.querySelectorAll('table');
-    log(`Found ${tables.length} tables in the page`);
-
-    let targetTable = null;
-    let titleIdx = 0, startIdx = 1, endIdx = 2, durationIdx = 3;
-
-    for (let tableIdx = 0; tableIdx < tables.length; tableIdx++) {
-      const table = tables[tableIdx];
-
-      // Try to find header row - check thead first, then first tr
-      let headerRow = table.querySelector('thead tr');
-      if (!headerRow) {
-        headerRow = table.querySelector('tr');
-      }
-      if (!headerRow) continue;
-
-      const headerCells = headerRow.querySelectorAll('th, td');
-      const headerTexts = Array.from(headerCells).map(c => c.textContent?.trim().toLowerCase() || '');
-      log(`Table ${tableIdx}: ${headerCells.length} cells in first row: [${headerTexts.join(', ')}]`);
-
-      let hasTitle = false, hasStart = false, hasEnd = false, hasDuration = false;
-
-      headerCells.forEach((cell, idx) => {
-        const text = cell.textContent?.trim().toLowerCase() || '';
-        // Use includes() for more flexible matching (handles "title:", "start time", etc.)
-        if (text.includes('title')) { titleIdx = idx; hasTitle = true; }
-        else if (text.includes('start')) { startIdx = idx; hasStart = true; }
-        else if (text.includes('end')) { endIdx = idx; hasEnd = true; }
-        else if (text.includes('duration')) { durationIdx = idx; hasDuration = true; }
-      });
-
-      // Found the right table if it has title, start, and duration columns
-      if (hasTitle && hasStart && hasDuration) {
-        targetTable = table;
-        log(`Found time details table (table ${tableIdx}) with title/start/duration headers`, 'success');
-        break;
-      }
-
-      // Fallback: if has start, end, duration but no title header, title is before start
-      if (hasStart && hasEnd && hasDuration) {
-        targetTable = table;
-        titleIdx = startIdx - 1;
-        if (titleIdx < 0) titleIdx = 0;
-        log(`Found time details table (table ${tableIdx}, no title header) with ${headerCells.length} columns`, 'success');
-        break;
-      }
-    }
+    // Target the specific FCLM time details table using its unique selector
+    const targetTable = doc.querySelector('table.ganttChart[aria-label="Time Details"]') ||
+                        doc.querySelector('table.ganttChart');
 
     if (!targetTable) {
-      log('No time details table found with standard headers', 'warn');
-
-      // Alternative approach: Look for any table row that has time-like data
-      // Format: something like "C-Returns_StowSweep | 12/08 6:21 PM | 12/08 6:41 PM | 20:00"
-      log('Searching all table rows for time-pattern data...');
-
-      for (let tableIdx = 0; tableIdx < tables.length; tableIdx++) {
-        const table = tables[tableIdx];
-        const allRows = table.querySelectorAll('tr');
-
-        for (let rowIdx = 0; rowIdx < allRows.length; rowIdx++) {
-          const row = allRows[rowIdx];
-          const cells = row.querySelectorAll('td, th');
-
-          if (cells.length >= 3) {
-            // Check if any cell contains a time pattern like "12/08" or "PM" or duration like "20:00"
-            const cellTexts = Array.from(cells).map(c => c.textContent?.trim() || '');
-            const hasDatePattern = cellTexts.some(t => /\d{1,2}\/\d{1,2}/.test(t));
-            const hasTimePattern = cellTexts.some(t => /\d{1,2}:\d{2}/.test(t) && !t.includes('EST'));
-            const hasPathName = cellTexts.some(t => /returns|stow|sweep|spider|eol|clock/i.test(t));
-
-            if (hasDatePattern || (hasTimePattern && hasPathName)) {
-              log(`Table ${tableIdx} Row ${rowIdx}: [${cellTexts.join(' | ')}]`);
-
-              // This looks like a data row - try to parse it
-              if (cells.length >= 4 && hasPathName) {
-                // Assume format: title, start, end, duration (or similar)
-                const title = cellTexts[0] || '';
-                const start = cellTexts[1] || '';
-                const end = cellTexts[2] || '';
-                const duration = cellTexts[3] || '';
-
-                if (title && !title.includes('title') && duration) {
-                  const session = {
-                    title,
-                    start,
-                    end,
-                    duration,
-                    durationMinutes: parseDurationToMinutes(duration)
-                  };
-                  result.sessions.push(session);
-                  log(`Parsed session from row: ${title} - ${duration}`, 'success');
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Also check for divs that might contain time entries
-      const possibleContainers = doc.querySelectorAll('div[class*="time"], div[class*="detail"], div[class*="row"]');
-      log(`Found ${possibleContainers.length} possible container divs`);
-
-      if (result.sessions.length > 0) {
-        log(`Found ${result.sessions.length} sessions via alternative parsing`, 'success');
-      } else {
-        log('No sessions found even with alternative parsing', 'warn');
-      }
-
+      log('No ganttChart table found in parsed HTML', 'warn');
       return result;
     }
 
-    const rows = targetTable.querySelectorAll('tr');
-    log(`Column indices - title: ${titleIdx}, start: ${startIdx}, end: ${endIdx}, duration: ${durationIdx}`);
-    log(`Total rows in table: ${rows.length}`);
+    log('Found ganttChart table in parsed HTML', 'success');
 
-    rows.forEach((row, index) => {
-      if (index === 0) return; // Skip header row
+    // Use the same parsing logic as scrapeGanttTable
+    const tbody = targetTable.querySelector('tbody');
+    const rows = tbody ? tbody.querySelectorAll('tr') : targetTable.querySelectorAll('tr');
+
+    log(`Found ${rows.length} rows in parsed table`);
+
+    for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+      const row = rows[rowIdx];
+      const rowClass = row.className || '';
+
+      // Skip non-data rows
+      if (rowClass.includes('totSummary') || row.querySelector('th')) {
+        continue;
+      }
 
       const cells = row.querySelectorAll('td');
-      if (cells.length > durationIdx) {
-        const title = cells[titleIdx]?.textContent?.trim() || '';
-        const start = cells[startIdx]?.textContent?.trim() || '';
-        const end = cells[endIdx]?.textContent?.trim() || '';
-        const duration = cells[durationIdx]?.textContent?.trim() || '';
+      if (cells.length < 4) continue;
 
-        // Skip empty titles or clock entries for MPV purposes
-        if (title && !title.includes('OffClock') && !title.includes('OnClock')) {
-          const session = {
-            title,
-            start,
-            end,
-            duration,
-            durationMinutes: parseDurationToMinutes(duration)
-          };
-          result.sessions.push(session);
-          log(`Parsed session: ${title} - ${duration} (${session.durationMinutes} mins)`);
+      let title = '';
+      let start = '';
+      let end = '';
+      let duration = '';
 
-          // Check if this is the current activity (no end time or end time is in future)
-          if (!end || end === '' || isOngoing(end)) {
-            result.currentActivity = session;
-            result.isClockedIn = true;
+      if (rowClass.includes('job-seg')) {
+        // Job segment: [trackingType] [title in <a>] [start] [end] [duration]
+        const titleLink = cells[1]?.querySelector('a');
+        title = titleLink ? titleLink.textContent.trim() : cells[1]?.textContent?.trim() || '';
+        start = cells[2]?.textContent?.trim() || '';
+        end = cells[3]?.textContent?.trim() || '';
+        duration = cells[4]?.textContent?.trim() || '';
+      } else if (rowClass.includes('function-seg') || rowClass.includes('clock-seg')) {
+        // Function/Clock segment: [title colspan=2] [start] [end] [duration]
+        let rawTitle = cells[0]?.textContent?.trim() || '';
+        if (rawTitle.includes('♦')) {
+          const parts = rawTitle.split('♦');
+          title = parts[parts.length - 1].trim();
+        } else {
+          title = rawTitle;
+        }
+        start = cells[1]?.textContent?.trim() || '';
+        end = cells[2]?.textContent?.trim() || '';
+        duration = cells[3]?.textContent?.trim() || '';
+      } else {
+        // Generic fallback
+        const firstCell = cells[0];
+        const colspan = firstCell?.getAttribute('colspan');
+        if (colspan === '2') {
+          title = firstCell?.textContent?.trim() || '';
+          start = cells[1]?.textContent?.trim() || '';
+          end = cells[2]?.textContent?.trim() || '';
+          duration = cells[3]?.textContent?.trim() || '';
+        } else {
+          const firstText = firstCell?.textContent?.trim() || '';
+          if (firstText.length <= 2 && cells.length >= 5) {
+            const titleLink = cells[1]?.querySelector('a');
+            title = titleLink ? titleLink.textContent.trim() : cells[1]?.textContent?.trim() || '';
+            start = cells[2]?.textContent?.trim() || '';
+            end = cells[3]?.textContent?.trim() || '';
+            duration = cells[4]?.textContent?.trim() || '';
+          } else {
+            title = firstText;
+            start = cells[1]?.textContent?.trim() || '';
+            end = cells[2]?.textContent?.trim() || '';
+            duration = cells[3]?.textContent?.trim() || '';
           }
         }
       }
-    });
+
+      // Skip empty or clock entries
+      if (!title || title.includes('OffClock') || title.includes('OnClock')) {
+        continue;
+      }
+
+      const durationMinutes = parseDurationToMinutes(duration);
+
+      const session = {
+        title,
+        start,
+        end,
+        duration,
+        durationMinutes,
+        rowType: rowClass.includes('job-seg') ? 'job' : (rowClass.includes('function-seg') ? 'function' : 'other')
+      };
+
+      result.sessions.push(session);
+      log(`Parsed session: ${title} - ${duration} (${durationMinutes} mins)`);
+
+      if (!end || end === '') {
+        result.currentActivity = session;
+        result.isClockedIn = true;
+      }
+    }
 
     log(`Total sessions parsed: ${result.sessions.length}`);
 
