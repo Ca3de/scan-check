@@ -694,7 +694,8 @@
   // Check for MPV risk based on current work code and AA history
   function checkForMpvRisk(sessions, currentWorkCode) {
     console.log('[MPV] Checking MPV risk for work code:', currentWorkCode);
-    console.log('[MPV] Sessions to check:', sessions.map(s => ({ title: s.title, duration: s.duration, mins: s.durationMinutes })));
+    console.log('[MPV] Number of sessions received:', sessions ? sessions.length : 'null/undefined');
+    console.log('[MPV] Sessions to check:', JSON.stringify(sessions, null, 2));
 
     const result = {
       hasMpvRisk: false,
