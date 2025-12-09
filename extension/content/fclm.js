@@ -9,7 +9,10 @@
   // ============== CONFIGURATION ==============
   const CONFIG = {
     WAREHOUSE_ID: new URLSearchParams(window.location.search).get('warehouseId') || 'IND8',
-    TIMEZONE: 'America/Indiana/Indianapolis'
+    TIMEZONE: 'America/Indiana/Indianapolis',
+    // Night shift times
+    SHIFT_START_HOUR: 18,  // 6 PM
+    SHIFT_END_HOUR: 6      // 6 AM next day
   };
 
   // ============== HELPERS ==============
@@ -26,12 +29,72 @@
     console.log(`%c${prefix} [${timestamp}] ${message}`, styles[type] || styles.info);
   }
 
+  // Calculate shift date range based on current time (for night shift)
+  function getShiftDateRange() {
+    const now = new Date();
+    const currentHour = now.getHours();
+
+    let startDate, endDate;
+
+    if (currentHour >= CONFIG.SHIFT_START_HOUR) {
+      // Between 6PM-11:59PM: shift started today, ends tomorrow
+      startDate = new Date(now);
+      endDate = new Date(now);
+      endDate.setDate(endDate.getDate() + 1);
+    } else if (currentHour < CONFIG.SHIFT_END_HOUR) {
+      // Between 12AM-6AM: shift started yesterday, ends today
+      startDate = new Date(now);
+      startDate.setDate(startDate.getDate() - 1);
+      endDate = new Date(now);
+    } else {
+      // Between 6AM-6PM: use today as day shift or previous night
+      // Default to checking previous night shift
+      startDate = new Date(now);
+      startDate.setDate(startDate.getDate() - 1);
+      endDate = new Date(now);
+    }
+
+    const formatDate = (d) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}/${month}/${day}`;
+    };
+
+    return {
+      startDate: formatDate(startDate),
+      endDate: formatDate(endDate),
+      startHour: CONFIG.SHIFT_START_HOUR,
+      endHour: CONFIG.SHIFT_END_HOUR
+    };
+  }
+
   // ============== FETCH EMPLOYEE TIME DETAILS ==============
 
   async function fetchEmployeeTimeDetails(employeeId) {
     log(`Fetching time details for employee: ${employeeId}`);
 
-    const url = `/employee/timeDetails?warehouseId=${CONFIG.WAREHOUSE_ID}&employeeId=${employeeId}`;
+    // Get shift date range based on current time
+    const shiftRange = getShiftDateRange();
+    log(`Shift range: ${shiftRange.startDate} ${shiftRange.startHour}:00 to ${shiftRange.endDate} ${shiftRange.endHour}:00`);
+
+    // Build URL with proper date range parameters for night shift
+    const params = new URLSearchParams({
+      employeeId: employeeId,
+      warehouseId: CONFIG.WAREHOUSE_ID,
+      startDateDay: shiftRange.startDate,
+      maxIntradayDays: '1',
+      spanType: 'Intraday',
+      startDateIntraday: shiftRange.startDate,
+      startHourIntraday: String(shiftRange.startHour),
+      startMinuteIntraday: '0',
+      endDateIntraday: shiftRange.endDate,
+      endHourIntraday: String(shiftRange.endHour),
+      endMinuteIntraday: '0'
+    });
+
+    const url = `/employee/timeDetails?${params.toString()}`;
+    log(`Fetching URL: ${url}`);
 
     try {
       const response = await fetch(url);
