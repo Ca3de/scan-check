@@ -133,19 +133,37 @@
       return result;
     }
 
-    // Parse table rows
+    // Parse table rows - find header to determine column indices
     const rows = table.querySelectorAll('tr');
+    let titleIdx = 0, startIdx = 1, endIdx = 2, durationIdx = 3;
+
+    // Check header row to find correct column indices
+    const headerRow = rows[0];
+    if (headerRow) {
+      const headerCells = headerRow.querySelectorAll('th, td');
+      headerCells.forEach((cell, idx) => {
+        const text = cell.textContent?.trim().toLowerCase() || '';
+        if (text === 'title') titleIdx = idx;
+        else if (text === 'start') startIdx = idx;
+        else if (text === 'end') endIdx = idx;
+        else if (text === 'duration') durationIdx = idx;
+      });
+    }
+
+    log(`Column indices - title: ${titleIdx}, start: ${startIdx}, end: ${endIdx}, duration: ${durationIdx}`);
+
     rows.forEach((row, index) => {
       if (index === 0) return; // Skip header row
 
       const cells = row.querySelectorAll('td');
-      if (cells.length >= 4) {
-        const title = cells[0]?.textContent?.trim() || '';
-        const start = cells[1]?.textContent?.trim() || '';
-        const end = cells[2]?.textContent?.trim() || '';
-        const duration = cells[3]?.textContent?.trim() || '';
+      if (cells.length > durationIdx) {
+        const title = cells[titleIdx]?.textContent?.trim() || '';
+        const start = cells[startIdx]?.textContent?.trim() || '';
+        const end = cells[endIdx]?.textContent?.trim() || '';
+        const duration = cells[durationIdx]?.textContent?.trim() || '';
 
-        if (title) {
+        // Skip empty titles or clock entries for MPV purposes
+        if (title && !title.includes('OffClock') && !title.includes('OnClock')) {
           const session = {
             title,
             start,
@@ -154,6 +172,7 @@
             durationMinutes: parseDurationToMinutes(duration)
           };
           result.sessions.push(session);
+          log(`Parsed session: ${title} - ${duration} (${session.durationMinutes} mins)`);
 
           // Check if this is the current activity (no end time or end time is in future)
           if (!end || end === '' || isOngoing(end)) {
@@ -163,6 +182,8 @@
         }
       }
     });
+
+    log(`Total sessions parsed: ${result.sessions.length}`);
 
     // Calculate total hours from OnClock/Paid entries
     result.sessions.forEach(session => {
