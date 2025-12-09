@@ -126,6 +126,31 @@
       isClockedIn: false
     };
 
+    // First, try to find embedded JSON data in script tags
+    // Many sites embed data that JavaScript renders
+    const scripts = doc.querySelectorAll('script');
+    for (const script of scripts) {
+      const content = script.textContent || '';
+      // Look for JSON data patterns
+      if (content.includes('timeDetails') || content.includes('sessions') || content.includes('activities')) {
+        log(`Found potential data in script tag (${content.length} chars)`);
+        // Try to extract JSON
+        const jsonMatch = content.match(/(?:var|let|const)\s+\w+\s*=\s*(\{[\s\S]*?\});/);
+        if (jsonMatch) {
+          log(`Found JSON pattern in script`);
+        }
+      }
+    }
+
+    // Also search the raw HTML for session-like data patterns
+    // Look for known path names that indicate time entries exist
+    const pathPatterns = ['C-Returns', 'StowSweep', 'EndofLine', 'WaterSpider', 'Vreturns', 'OnClock', 'OffClock'];
+    for (const pattern of pathPatterns) {
+      if (html.includes(pattern)) {
+        log(`Found "${pattern}" in HTML - time data exists`);
+      }
+    }
+
     // Find the correct table - look for one with "start", "end", "duration" headers
     // Note: The "title" column may not have a header, it's just the first column
     const tables = doc.querySelectorAll('table');
@@ -177,7 +202,65 @@
     }
 
     if (!targetTable) {
-      log('No time details table found with start/end/duration headers', 'warn');
+      log('No time details table found with standard headers', 'warn');
+
+      // Alternative approach: Look for any table row that has time-like data
+      // Format: something like "C-Returns_StowSweep | 12/08 6:21 PM | 12/08 6:41 PM | 20:00"
+      log('Searching all table rows for time-pattern data...');
+
+      for (let tableIdx = 0; tableIdx < tables.length; tableIdx++) {
+        const table = tables[tableIdx];
+        const allRows = table.querySelectorAll('tr');
+
+        for (let rowIdx = 0; rowIdx < allRows.length; rowIdx++) {
+          const row = allRows[rowIdx];
+          const cells = row.querySelectorAll('td, th');
+
+          if (cells.length >= 3) {
+            // Check if any cell contains a time pattern like "12/08" or "PM" or duration like "20:00"
+            const cellTexts = Array.from(cells).map(c => c.textContent?.trim() || '');
+            const hasDatePattern = cellTexts.some(t => /\d{1,2}\/\d{1,2}/.test(t));
+            const hasTimePattern = cellTexts.some(t => /\d{1,2}:\d{2}/.test(t) && !t.includes('EST'));
+            const hasPathName = cellTexts.some(t => /returns|stow|sweep|spider|eol|clock/i.test(t));
+
+            if (hasDatePattern || (hasTimePattern && hasPathName)) {
+              log(`Table ${tableIdx} Row ${rowIdx}: [${cellTexts.join(' | ')}]`);
+
+              // This looks like a data row - try to parse it
+              if (cells.length >= 4 && hasPathName) {
+                // Assume format: title, start, end, duration (or similar)
+                const title = cellTexts[0] || '';
+                const start = cellTexts[1] || '';
+                const end = cellTexts[2] || '';
+                const duration = cellTexts[3] || '';
+
+                if (title && !title.includes('title') && duration) {
+                  const session = {
+                    title,
+                    start,
+                    end,
+                    duration,
+                    durationMinutes: parseDurationToMinutes(duration)
+                  };
+                  result.sessions.push(session);
+                  log(`Parsed session from row: ${title} - ${duration}`, 'success');
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Also check for divs that might contain time entries
+      const possibleContainers = doc.querySelectorAll('div[class*="time"], div[class*="detail"], div[class*="row"]');
+      log(`Found ${possibleContainers.length} possible container divs`);
+
+      if (result.sessions.length > 0) {
+        log(`Found ${result.sessions.length} sessions via alternative parsing`, 'success');
+      } else {
+        log('No sessions found even with alternative parsing', 'warn');
+      }
+
       return result;
     }
 
