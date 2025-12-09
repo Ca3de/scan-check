@@ -282,6 +282,25 @@
         margin-bottom: 6px;
         text-align: center;
       }
+      .mpv-details {
+        font-size: 11px;
+        color: #ff6b6b;
+        margin-top: 4px;
+      }
+      .fc-lt-associate-info.mpv-ok {
+        background: rgba(46, 204, 113, 0.2);
+        border: 2px solid #2ecc71;
+      }
+      .mpv-ok-alert {
+        background: #2ecc71;
+        color: #fff;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 11px;
+        margin-bottom: 6px;
+        text-align: center;
+      }
     `;
 
     document.head.appendChild(styles);
@@ -385,6 +404,14 @@
 
     try {
       showPanelMessage('Submitting work code...', 'info');
+
+      // Store work code in background script for MPV check on badge page
+      await browser.runtime.sendMessage({
+        action: 'setCurrentWorkCode',
+        workCode: workCode
+      });
+      console.log('[FC Labor Tracking] Work code stored for MPV check:', workCode);
+
       await handleWorkCodeInput(workCode);
       showPanelMessage('Work code submitted!', 'success');
 
@@ -507,13 +534,20 @@
       // Show loading state
       showAssociateLoading(badgeId);
 
+      // Get the current work code from background script
+      const workCodeResponse = await browser.runtime.sendMessage({
+        action: 'getCurrentWorkCode'
+      });
+      const currentWorkCode = workCodeResponse?.workCode || null;
+      console.log('[FC Labor Tracking] Current work code for MPV check:', currentWorkCode);
+
       const response = await browser.runtime.sendMessage({
         action: 'fetchEmployeeTimeDetails',
         employeeId: badgeId
       });
 
       if (response.success && response.data) {
-        showAssociateTimeDetails(response.data);
+        showAssociateTimeDetails(response.data, currentWorkCode);
       } else {
         showAssociateNotFound(badgeId, response.error);
       }
@@ -535,40 +569,160 @@
     detailsDiv.textContent = `Badge: ${badgeId}`;
   }
 
-  // MPV Warning titles - if AA has worked these, warn about Multiple Path Violation
-  const MPV_WARNING_TITLES = [
-    'C-Returns_StowSweep',
-    'C-Returns_EndofLine',
-    'Vreturns WaterSpider'
-  ];
+  // MPV (Multiple Path Violation) Configuration
+  // These are the restricted paths that can cause MPV
+  const MPV_RESTRICTED_PATHS = {
+    'C-Returns_StowSweep': ['STOWSWEEP', 'SWEEP', 'CRESW', 'STOW_SWEEP', 'STOWSW'],
+    'C-Returns_EndofLine': ['CREOL', 'EOL', 'ENDOFLINE', 'END_OF_LINE'],
+    'Vreturns WaterSpider': ['VRWS', 'WATERSPIDER', 'WS', 'WATER_SPIDER', 'VRETWS']
+  };
 
-  function checkForMpvRisk(sessions) {
-    // Check if any session title contains one of the MPV warning titles
-    for (const session of sessions) {
-      for (const mpvTitle of MPV_WARNING_TITLES) {
-        if (session.title && session.title.includes(mpvTitle)) {
-          return {
-            hasMpvRisk: true,
-            matchedTitle: mpvTitle,
-            session: session
-          };
+  // Max time allowed on a restricted path (4 hours 30 minutes in minutes)
+  const MPV_MAX_TIME_MINUTES = 270;
+
+  // Get which restricted path a work code belongs to (if any)
+  function getRestrictedPathForWorkCode(workCode) {
+    if (!workCode) return null;
+    const upperCode = workCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+    for (const [pathTitle, codes] of Object.entries(MPV_RESTRICTED_PATHS)) {
+      for (const code of codes) {
+        if (upperCode.includes(code) || code.includes(upperCode)) {
+          return pathTitle;
         }
       }
     }
-    return { hasMpvRisk: false };
+    return null;
   }
 
-  function showAssociateTimeDetails(data) {
+  // Get which restricted path a session title belongs to (if any)
+  function getRestrictedPathForTitle(title) {
+    if (!title) return null;
+
+    for (const pathTitle of Object.keys(MPV_RESTRICTED_PATHS)) {
+      if (title.includes(pathTitle)) {
+        return pathTitle;
+      }
+    }
+    return null;
+  }
+
+  // Parse duration string (e.g., "2h 30m", "45m", "1:30:00") to minutes
+  function parseDurationToMinutes(duration) {
+    if (!duration) return 0;
+
+    // Try "Xh Ym" format
+    const hMatch = duration.match(/(\d+)\s*h/i);
+    const mMatch = duration.match(/(\d+)\s*m/i);
+    if (hMatch || mMatch) {
+      const hours = hMatch ? parseInt(hMatch[1]) : 0;
+      const mins = mMatch ? parseInt(mMatch[1]) : 0;
+      return hours * 60 + mins;
+    }
+
+    // Try "H:MM:SS" or "H:MM" format
+    const timeMatch = duration.match(/(\d+):(\d+)(?::(\d+))?/);
+    if (timeMatch) {
+      const hours = parseInt(timeMatch[1]);
+      const mins = parseInt(timeMatch[2]);
+      return hours * 60 + mins;
+    }
+
+    return 0;
+  }
+
+  // Calculate total time per restricted path from sessions
+  function calculateRestrictedPathTimes(sessions) {
+    const pathTimes = {};
+
+    for (const session of sessions) {
+      const restrictedPath = getRestrictedPathForTitle(session.title);
+      if (restrictedPath) {
+        const mins = parseDurationToMinutes(session.duration);
+        pathTimes[restrictedPath] = (pathTimes[restrictedPath] || 0) + mins;
+      }
+    }
+
+    return pathTimes;
+  }
+
+  // Check for MPV risk based on current work code and AA history
+  function checkForMpvRisk(sessions, currentWorkCode) {
+    const result = {
+      hasMpvRisk: false,
+      reason: null,
+      details: null,
+      workedPaths: [],
+      targetPath: null,
+      pathTimes: {}
+    };
+
+    // Get the restricted path for the work code being assigned
+    const targetPath = getRestrictedPathForWorkCode(currentWorkCode);
+    result.targetPath = targetPath;
+
+    // Calculate time spent on each restricted path
+    const pathTimes = calculateRestrictedPathTimes(sessions);
+    result.pathTimes = pathTimes;
+
+    // Find which restricted paths the AA has worked
+    const workedPaths = Object.keys(pathTimes);
+    result.workedPaths = workedPaths;
+
+    // If target is not a restricted path, no MPV risk
+    if (!targetPath) {
+      return result;
+    }
+
+    // Rule 1: Check if AA has worked a DIFFERENT restricted path
+    for (const workedPath of workedPaths) {
+      if (workedPath !== targetPath) {
+        result.hasMpvRisk = true;
+        result.reason = 'PATH_SWITCH';
+        result.details = `Already worked ${workedPath} (${formatMinutes(pathTimes[workedPath])}). Cannot switch to ${targetPath}.`;
+        return result;
+      }
+    }
+
+    // Rule 2: Check if AA has exceeded 4:30 on the target restricted path
+    const targetTime = pathTimes[targetPath] || 0;
+    if (targetTime >= MPV_MAX_TIME_MINUTES) {
+      result.hasMpvRisk = true;
+      result.reason = 'TIME_EXCEEDED';
+      result.details = `Already ${formatMinutes(targetTime)} on ${targetPath}. Max allowed is ${formatMinutes(MPV_MAX_TIME_MINUTES)}.`;
+      return result;
+    }
+
+    // If same path and under time limit, show remaining time as info
+    if (targetTime > 0) {
+      const remaining = MPV_MAX_TIME_MINUTES - targetTime;
+      result.remainingTime = remaining;
+      result.currentTime = targetTime;
+    }
+
+    return result;
+  }
+
+  // Format minutes as "Xh Ym"
+  function formatMinutes(mins) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h > 0 && m > 0) return `${h}h ${m}m`;
+    if (h > 0) return `${h}h`;
+    return `${m}m`;
+  }
+
+  function showAssociateTimeDetails(data, currentWorkCode) {
     const infoDiv = document.getElementById('fc-lt-associate-info');
     const nameDiv = document.getElementById('fc-lt-associate-name');
     const detailsDiv = document.getElementById('fc-lt-associate-details');
 
     if (!infoDiv) return;
 
-    infoDiv.classList.remove('hidden', 'not-found');
+    infoDiv.classList.remove('hidden', 'not-found', 'mpv-warning', 'mpv-ok');
 
-    // Check for MPV risk
-    const mpvCheck = checkForMpvRisk(data.sessions);
+    // Check for MPV risk based on current work code
+    const mpvCheck = checkForMpvRisk(data.sessions, currentWorkCode);
 
     // Find current activity
     const currentActivity = data.currentActivity;
@@ -578,32 +732,67 @@
     nameDiv.textContent = `Badge: ${data.employeeId}`;
 
     if (mpvCheck.hasMpvRisk) {
-      // Show MPV warning
+      // Show MPV warning - BLOCK this assignment
       infoDiv.classList.add('mpv-warning');
+
+      let alertText = '⚠️ MPV RISK - DO NOT ASSIGN!';
+      if (mpvCheck.reason === 'PATH_SWITCH') {
+        alertText = '🚫 MPV - PATH SWITCH BLOCKED!';
+      } else if (mpvCheck.reason === 'TIME_EXCEEDED') {
+        alertText = '🚫 MPV - TIME LIMIT EXCEEDED!';
+      }
+
       detailsDiv.innerHTML = `
-        <div class="mpv-alert">⚠️ MPV RISK - Avoid Multiple Path Violation!</div>
-        <strong>${mpvCheck.matchedTitle}</strong> found in history<br>
-        ${currentActivity ? `Current: ${currentActivity.title}` : ''}
+        <div class="mpv-alert">${alertText}</div>
+        <div class="mpv-details">${mpvCheck.details}</div>
+        ${currentActivity ? `<br>Current: ${currentActivity.title}` : ''}
       `;
-      showPanelMessage('⚠️ MPV Risk - Check time details!', 'error');
+      showPanelMessage('🚫 MPV Risk - Cannot assign!', 'error');
+
+    } else if (mpvCheck.targetPath && mpvCheck.remainingTime) {
+      // Same restricted path, under limit - show remaining time
+      infoDiv.classList.add('mpv-ok');
+      detailsDiv.innerHTML = `
+        <div class="mpv-ok-alert">✓ OK - Same path, time remaining</div>
+        <strong>${mpvCheck.targetPath}</strong><br>
+        Used: ${formatMinutes(mpvCheck.currentTime)} | Remaining: ${formatMinutes(mpvCheck.remainingTime)}
+        ${currentActivity ? `<br>Current: ${currentActivity.title}` : ''}
+      `;
+      showPanelMessage(`✓ OK - ${formatMinutes(mpvCheck.remainingTime)} remaining`, 'success');
+
+    } else if (mpvCheck.targetPath && mpvCheck.workedPaths.length === 0) {
+      // First time on restricted path
+      infoDiv.classList.add('mpv-ok');
+      detailsDiv.innerHTML = `
+        <div class="mpv-ok-alert">✓ OK - First time on this path</div>
+        <strong>${mpvCheck.targetPath}</strong><br>
+        Max allowed: ${formatMinutes(MPV_MAX_TIME_MINUTES)}
+        ${currentActivity ? `<br>Current: ${currentActivity.title}` : ''}
+      `;
+      showPanelMessage('✓ First time on restricted path', 'success');
+
     } else if (currentActivity) {
-      infoDiv.classList.remove('mpv-warning');
+      // Non-restricted path with current activity
       const statusClass = isClockedIn ? 'uph' : 'uph low';
       detailsDiv.innerHTML = `
         <strong>${currentActivity.title}</strong><br>
         <span class="${statusClass}">${isClockedIn ? 'Active' : 'Inactive'}</span> |
         Duration: ${currentActivity.duration || 'ongoing'}
       `;
+      showPanelMessage('✓ Ready to assign', 'success');
+
     } else if (data.sessions.length > 0) {
-      infoDiv.classList.remove('mpv-warning');
-      // Show most recent session
+      // Non-restricted path, show last session
       const lastSession = data.sessions[data.sessions.length - 1];
       detailsDiv.innerHTML = `
         Last: <strong>${lastSession.title}</strong><br>
         ${data.hoursOnTask ? `Hours: ${data.hoursOnTask.toFixed(1)}h` : `Sessions: ${data.sessions.length}`}
       `;
+      showPanelMessage('✓ Ready to assign', 'info');
+
     } else {
       detailsDiv.textContent = 'No time details found for today';
+      showPanelMessage('✓ Ready to assign (no history)', 'info');
     }
   }
 

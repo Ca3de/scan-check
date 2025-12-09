@@ -11,6 +11,9 @@
     fclm: null
   };
 
+  // Store current work code being assigned (persists across page navigation)
+  let currentWorkCode = null;
+
   // Listen for messages from content scripts
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[FC Labor Tracking] Background received message:', message.action, 'from tab:', sender.tab?.id);
@@ -26,6 +29,28 @@
         kiosk: connectedTabs.kiosk,
         fclm: connectedTabs.fclm
       });
+      return false;
+    }
+
+    // Store current work code when submitted
+    if (message.action === 'setCurrentWorkCode') {
+      currentWorkCode = message.workCode;
+      console.log('[FC Labor Tracking] Work code stored:', currentWorkCode);
+      sendResponse({ success: true });
+      return false;
+    }
+
+    // Get current work code for MPV check
+    if (message.action === 'getCurrentWorkCode') {
+      sendResponse({ workCode: currentWorkCode });
+      return false;
+    }
+
+    // Clear work code (after Done is clicked)
+    if (message.action === 'clearCurrentWorkCode') {
+      currentWorkCode = null;
+      console.log('[FC Labor Tracking] Work code cleared');
+      sendResponse({ success: true });
       return false;
     }
 
