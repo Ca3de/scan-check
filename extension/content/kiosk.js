@@ -599,8 +599,26 @@
   function getRestrictedPathForTitle(title) {
     if (!title) return null;
 
+    // Normalize title for matching (remove special chars, lowercase)
+    const normalizedTitle = title.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Check each restricted path with flexible matching
     for (const pathTitle of Object.keys(MPV_RESTRICTED_PATHS)) {
-      if (title.includes(pathTitle)) {
+      const normalizedPath = pathTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      // Exact or contains match
+      if (title.includes(pathTitle) || normalizedTitle.includes(normalizedPath)) {
+        return pathTitle;
+      }
+
+      // Also check for key parts: stowsweep, endofline, waterspider
+      if (pathTitle.includes('StowSweep') && (normalizedTitle.includes('stowsweep') || normalizedTitle.includes('sweepstow'))) {
+        return pathTitle;
+      }
+      if (pathTitle.includes('EndofLine') && (normalizedTitle.includes('endofline') || normalizedTitle.includes('eol'))) {
+        return pathTitle;
+      }
+      if (pathTitle.includes('WaterSpider') && (normalizedTitle.includes('waterspider') || normalizedTitle.includes('ws'))) {
         return pathTitle;
       }
     }
@@ -638,16 +656,22 @@
     for (const session of sessions) {
       const restrictedPath = getRestrictedPathForTitle(session.title);
       if (restrictedPath) {
-        const mins = parseDurationToMinutes(session.duration);
+        // Use durationMinutes from FCLM (already parsed), fallback to parsing duration string
+        const mins = session.durationMinutes || parseDurationToMinutes(session.duration);
         pathTimes[restrictedPath] = (pathTimes[restrictedPath] || 0) + mins;
+        console.log(`[MPV] ${session.title} -> ${restrictedPath}: ${mins} mins`);
       }
     }
 
+    console.log('[MPV] Path times:', pathTimes);
     return pathTimes;
   }
 
   // Check for MPV risk based on current work code and AA history
   function checkForMpvRisk(sessions, currentWorkCode) {
+    console.log('[MPV] Checking MPV risk for work code:', currentWorkCode);
+    console.log('[MPV] Sessions to check:', sessions.map(s => ({ title: s.title, duration: s.duration, mins: s.durationMinutes })));
+
     const result = {
       hasMpvRisk: false,
       reason: null,
@@ -660,6 +684,7 @@
     // Get the restricted path for the work code being assigned
     const targetPath = getRestrictedPathForWorkCode(currentWorkCode);
     result.targetPath = targetPath;
+    console.log('[MPV] Target restricted path:', targetPath);
 
     // Calculate time spent on each restricted path
     const pathTimes = calculateRestrictedPathTimes(sessions);
