@@ -10,7 +10,12 @@
                           !window.location.pathname.startsWith('/do/');
   const isBadgePage = window.location.pathname.startsWith('/do/laborTrackingKiosk');
 
+  // Extract warehouse ID from URL (e.g., IND8 from /IND8/laborTrackingKiosk)
+  const warehouseMatch = window.location.pathname.match(/\/([A-Z0-9]+)\/laborTrackingKiosk/);
+  const warehouseId = warehouseMatch ? warehouseMatch[1] : 'IND8';
+
   console.log('[FC Labor Tracking] Page type:', isWorkCodePage ? 'Work Code' : (isBadgePage ? 'Badge ID' : 'Unknown'));
+  console.log('[FC Labor Tracking] Warehouse ID:', warehouseId);
 
   // Create floating panel UI
   createFloatingPanel();
@@ -65,7 +70,8 @@
         <div class="fc-lt-section hidden" id="fc-lt-badge-section">
           <label>Badge ID</label>
           <input type="text" id="fc-lt-badge" placeholder="Scan or enter badge ID" autocomplete="off">
-          <button id="fc-lt-submit-badge" class="fc-lt-btn primary">Submit</button>
+          <button id="fc-lt-submit-badge" class="fc-lt-btn primary">Submit Badge</button>
+          <button id="fc-lt-done" class="fc-lt-btn success">Done</button>
           <button id="fc-lt-back" class="fc-lt-btn secondary">Back</button>
         </div>
         <div class="fc-lt-message hidden" id="fc-lt-message"></div>
@@ -164,6 +170,13 @@
       .fc-lt-btn.primary:hover {
         background: #2980b9;
       }
+      .fc-lt-btn.success {
+        background: #27ae60;
+        color: #fff;
+      }
+      .fc-lt-btn.success:hover {
+        background: #219a52;
+      }
       .fc-lt-btn.secondary {
         background: #444;
         color: #fff;
@@ -222,6 +235,7 @@
     const badgeInput = document.getElementById('fc-lt-badge');
     const submitWorkCodeBtn = document.getElementById('fc-lt-submit-workcode');
     const submitBadgeBtn = document.getElementById('fc-lt-submit-badge');
+    const doneBtn = document.getElementById('fc-lt-done');
     const backBtn = document.getElementById('fc-lt-back');
 
     // Minimize toggle
@@ -242,12 +256,11 @@
       if (e.key === 'Enter') submitBadge();
     });
 
-    // Back button
-    backBtn.addEventListener('click', () => {
-      document.getElementById('fc-lt-badge-section').classList.add('hidden');
-      document.getElementById('fc-lt-workcode-section').classList.remove('hidden');
-      workCodeInput.focus();
-    });
+    // Done button - clicks the page's Done/Submit button
+    doneBtn.addEventListener('click', () => clickPageDoneButton());
+
+    // Back button - triggers the page's back functionality
+    backBtn.addEventListener('click', () => triggerBack());
   }
 
   function makeDraggable(panel) {
@@ -291,12 +304,14 @@
       await handleWorkCodeInput(workCode);
       showPanelMessage('Work code submitted!', 'success');
 
-      // Switch to badge mode after a short delay
+      // The page will navigate, but if it doesn't, switch to badge mode
       setTimeout(() => {
-        document.getElementById('fc-lt-workcode-section').classList.add('hidden');
-        document.getElementById('fc-lt-badge-section').classList.remove('hidden');
-        document.getElementById('fc-lt-badge').focus();
-        showPanelMessage('Enter badge ID', 'info');
+        if (document.getElementById('fc-lt-workcode-section')) {
+          document.getElementById('fc-lt-workcode-section').classList.add('hidden');
+          document.getElementById('fc-lt-badge-section').classList.remove('hidden');
+          document.getElementById('fc-lt-badge').focus();
+          showPanelMessage('Enter badge ID', 'info');
+        }
       }, 500);
     } catch (error) {
       showPanelMessage('Error: ' + error.message, 'error');
@@ -316,7 +331,7 @@
     try {
       showPanelMessage('Submitting badge...', 'info');
       await handleBadgeIdInput(badgeId);
-      showPanelMessage('Badge submitted!', 'success');
+      showPanelMessage('Badge added!', 'success');
       input.value = '';
 
       // Ready for next badge
@@ -329,6 +344,57 @@
     }
   }
 
+  function clickPageDoneButton() {
+    // Find and click the Done/Submit button on the page
+    const submitBtn = document.querySelector('input[type="submit"][value="Done"]') ||
+                      document.querySelector('input[type="submit"]') ||
+                      document.querySelector('button[type="submit"]');
+
+    if (submitBtn) {
+      console.log('[FC Labor Tracking] Clicking Done button');
+      submitBtn.click();
+      showPanelMessage('Done clicked!', 'success');
+    } else {
+      showPanelMessage('Could not find Done button', 'error');
+    }
+  }
+
+  function triggerBack() {
+    console.log('[FC Labor Tracking] Triggering back navigation');
+
+    // Method 1: Try to trigger the hotkey event that the page listens to
+    if (typeof jQuery !== 'undefined' && jQuery.publish) {
+      jQuery.publish('/hotkey/back');
+      showPanelMessage('Going back...', 'info');
+      return;
+    }
+
+    // Method 2: Simulate pressing 'b' key (the page's back hotkey)
+    const bKeyEvent = new KeyboardEvent('keydown', {
+      key: 'b',
+      code: 'KeyB',
+      keyCode: 66,
+      which: 66,
+      bubbles: true,
+      cancelable: true
+    });
+    document.dispatchEvent(bKeyEvent);
+
+    // Method 3: Direct navigation as fallback
+    setTimeout(() => {
+      // Check if we're still on the same page
+      if (isBadgePage) {
+        window.location.href = `/${warehouseId}/laborTrackingKiosk`;
+      } else if (typeof window.APP_LAUNCHER_MAIN !== 'undefined') {
+        window.location.href = window.APP_LAUNCHER_MAIN;
+      } else {
+        window.history.back();
+      }
+    }, 100);
+
+    showPanelMessage('Going back...', 'info');
+  }
+
   function showPanelMessage(text, type) {
     const msg = document.getElementById('fc-lt-message');
     msg.textContent = text;
@@ -338,40 +404,40 @@
   async function handleWorkCodeInput(workCode) {
     console.log('[FC Labor Tracking] Attempting to input work code:', workCode);
 
-    const inputSelectors = [
-      'input[placeholder*="Work code" i]',
-      'input[placeholder*="Indirect" i]',
-      'input[name*="workCode" i]',
-      'input[name*="work_code" i]',
-      'input[id*="workCode" i]',
-      'input[id*="work-code" i]',
-      'input[type="text"]:not([id^="fc-lt"])'
-    ];
-
-    let inputField = null;
-
-    for (const selector of inputSelectors) {
-      const inputs = document.querySelectorAll(selector);
-      if (inputs.length > 0) {
-        for (const input of inputs) {
-          if (isElementVisible(input) && !input.id.startsWith('fc-lt')) {
-            inputField = input;
-            console.log('[FC Labor Tracking] Found input with selector:', selector);
-            break;
-          }
-        }
-        if (inputField) break;
-      }
-    }
+    // Target the specific calmCode input field
+    const inputField = document.getElementById('calmCode') ||
+                       document.querySelector('input[name="calmCode"]') ||
+                       document.querySelector('input[placeholder*="Indirect Work code" i]');
 
     if (!inputField) {
-      throw new Error('Could not find work code input field');
+      throw new Error('Could not find work code input field (#calmCode)');
     }
 
+    console.log('[FC Labor Tracking] Found calmCode input field');
+
+    // Clear and set value
     inputField.focus();
     inputField.value = '';
-    await simulateTyping(inputField, workCode);
-    await simulateEnterKey(inputField);
+
+    // Set the value directly
+    inputField.value = workCode;
+
+    // Dispatch events for any JS listeners
+    inputField.dispatchEvent(new Event('input', { bubbles: true }));
+    inputField.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // Small delay then submit the form
+    await sleep(100);
+
+    // Find and submit the form
+    const form = inputField.closest('form');
+    if (form) {
+      console.log('[FC Labor Tracking] Submitting form');
+      form.submit();
+    } else {
+      // Fallback: simulate Enter key
+      await simulateEnterKey(inputField);
+    }
 
     return { success: true };
   }
@@ -379,67 +445,37 @@
   async function handleBadgeIdInput(badgeId) {
     console.log('[FC Labor Tracking] Attempting to input badge ID:', badgeId);
 
-    const inputSelectors = [
-      'input[placeholder*="badge" i]',
-      'input[placeholder*="scan" i]',
-      'input[name*="badge" i]',
-      'input[id*="badge" i]',
-      'input[type="text"]:not([id^="fc-lt"])'
-    ];
-
-    let inputField = null;
-
-    for (const selector of inputSelectors) {
-      const inputs = document.querySelectorAll(selector);
-      if (inputs.length > 0) {
-        for (const input of inputs) {
-          if (isElementVisible(input) && !input.id.startsWith('fc-lt')) {
-            inputField = input;
-            console.log('[FC Labor Tracking] Found badge input with selector:', selector);
-            break;
-          }
-        }
-        if (inputField) break;
-      }
-    }
+    // Target the specific trackingBadgeId input field
+    const inputField = document.getElementById('trackingBadgeId') ||
+                       document.querySelector('input[name="trackingBadgeId"]');
 
     if (!inputField) {
-      throw new Error('Could not find badge ID input field');
+      throw new Error('Could not find badge ID input field (#trackingBadgeId)');
     }
 
+    console.log('[FC Labor Tracking] Found trackingBadgeId input field');
+
+    // Clear and set value
     inputField.focus();
     inputField.value = '';
-    await simulateTyping(inputField, badgeId);
+
+    // Set the value directly
+    inputField.value = badgeId;
+
+    // Dispatch events
+    inputField.dispatchEvent(new Event('input', { bubbles: true }));
+    inputField.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // Small delay then simulate Enter to add the badge
+    await sleep(100);
     await simulateEnterKey(inputField);
 
     return { success: true };
   }
 
-  function isElementVisible(element) {
-    if (!element) return false;
-    const style = window.getComputedStyle(element);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-      return false;
-    }
-    const rect = element.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-  }
-
-  async function simulateTyping(element, text) {
-    element.focus();
-    for (const char of text) {
-      element.value += char;
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(10);
-    }
-    element.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-
   async function simulateEnterKey(element) {
-    await sleep(100);
-
-    const enterEvent = new KeyboardEvent('keydown', {
+    // Create and dispatch keydown event for Enter
+    const enterDown = new KeyboardEvent('keydown', {
       key: 'Enter',
       code: 'Enter',
       keyCode: 13,
@@ -447,37 +483,28 @@
       bubbles: true,
       cancelable: true
     });
-    element.dispatchEvent(enterEvent);
+    element.dispatchEvent(enterDown);
 
-    const keyUpEvent = new KeyboardEvent('keyup', {
+    // Also dispatch keypress
+    const enterPress = new KeyboardEvent('keypress', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    });
+    element.dispatchEvent(enterPress);
+
+    // And keyup
+    const enterUp = new KeyboardEvent('keyup', {
       key: 'Enter',
       code: 'Enter',
       keyCode: 13,
       which: 13,
       bubbles: true
     });
-    element.dispatchEvent(keyUpEvent);
-
-    await sleep(200);
-
-    // Try clicking submit button if Enter doesn't work
-    const submitSelectors = [
-      'button[type="submit"]',
-      'input[type="submit"]',
-      'button.submit',
-      'button.primary'
-    ];
-
-    for (const selector of submitSelectors) {
-      try {
-        const btn = document.querySelector(selector);
-        if (btn && isElementVisible(btn) && !btn.id.startsWith('fc-lt')) {
-          console.log('[FC Labor Tracking] Clicking submit button');
-          btn.click();
-          break;
-        }
-      } catch (e) {}
-    }
+    element.dispatchEvent(enterUp);
   }
 
   function sleep(ms) {
@@ -488,7 +515,8 @@
   browser.runtime.sendMessage({
     action: 'contentScriptReady',
     pageType: isWorkCodePage ? 'workCode' : (isBadgePage ? 'badge' : 'unknown'),
-    url: window.location.href
+    url: window.location.href,
+    warehouseId: warehouseId
   }).catch(err => {
     console.log('[FC Labor Tracking] Could not notify background script:', err);
   });
