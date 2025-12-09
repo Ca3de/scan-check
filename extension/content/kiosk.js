@@ -467,9 +467,27 @@
     inputField.dispatchEvent(new Event('input', { bubbles: true }));
     inputField.dispatchEvent(new Event('change', { bubbles: true }));
 
-    // Small delay then simulate Enter to add the badge
+    // Small delay then click the Done button to submit the form
     await sleep(150);
-    await simulateEnterKey(inputField);
+
+    // Find and click the Done/Submit button
+    const submitBtn = document.querySelector('input[type="submit"][value="Done"]') ||
+                      document.querySelector('input[type="submit"]') ||
+                      document.querySelector('button[type="submit"]');
+
+    if (submitBtn) {
+      console.log('[FC Labor Tracking] Clicking Done button to submit badge');
+      submitBtn.click();
+    } else {
+      // Fallback: submit the form directly
+      const form = inputField.closest('form');
+      if (form) {
+        console.log('[FC Labor Tracking] Submitting form directly');
+        form.submit();
+      } else {
+        throw new Error('Could not find submit button or form');
+      }
+    }
 
     return { success: true };
   }
