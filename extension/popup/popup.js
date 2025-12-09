@@ -205,7 +205,14 @@ function addActivity(action) {
   });
 
   const li = document.createElement('li');
-  li.innerHTML = `<span class="time">${timeStr}</span><span class="action">${action}</span>`;
+  const timeSpan = document.createElement('span');
+  timeSpan.className = 'time';
+  timeSpan.textContent = timeStr;
+  const actionSpan = document.createElement('span');
+  actionSpan.className = 'action';
+  actionSpan.textContent = action;
+  li.appendChild(timeSpan);
+  li.appendChild(actionSpan);
 
   // Add to beginning of list
   if (activityList.firstChild) {
@@ -226,7 +233,12 @@ function addActivity(action) {
 async function saveRecentActivity() {
   const activities = [];
   for (const li of activityList.children) {
-    activities.push(li.innerHTML);
+    const timeSpan = li.querySelector('.time');
+    const actionSpan = li.querySelector('.action');
+    activities.push({
+      time: timeSpan ? timeSpan.textContent : '',
+      action: actionSpan ? actionSpan.textContent : ''
+    });
   }
   await browser.storage.local.set({ recentActivity: activities });
 }
@@ -235,9 +247,16 @@ async function loadRecentActivity() {
   try {
     const data = await browser.storage.local.get('recentActivity');
     if (data.recentActivity) {
-      for (const html of data.recentActivity) {
+      for (const activity of data.recentActivity) {
         const li = document.createElement('li');
-        li.innerHTML = html;
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'time';
+        timeSpan.textContent = activity.time || '';
+        const actionSpan = document.createElement('span');
+        actionSpan.className = 'action';
+        actionSpan.textContent = activity.action || '';
+        li.appendChild(timeSpan);
+        li.appendChild(actionSpan);
         activityList.appendChild(li);
       }
     }
