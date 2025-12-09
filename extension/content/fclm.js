@@ -95,8 +95,8 @@
     });
 
     // Match FCLM URL pattern with ?& at start - use absolute URL
-    const baseUrl = window.location.origin || 'https://fclm-portal.amazon.com';
-    const url = `${baseUrl}/employee/timeDetails?&${params.toString()}`;
+    // Hardcode the base URL since window.location.origin might not work in extension context
+    const url = `https://fclm-portal.amazon.com/employee/timeDetails?&${params.toString()}`;
     log(`Fetching URL: ${url}`);
 
     try {
