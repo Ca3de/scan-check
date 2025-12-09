@@ -126,38 +126,58 @@
       isClockedIn: false
     };
 
-    // Find the correct table - look for one with "title", "start", "end", "duration" headers
+    // Find the correct table - look for one with "start", "end", "duration" headers
+    // Note: The "title" column may not have a header, it's just the first column
     const tables = doc.querySelectorAll('table');
     log(`Found ${tables.length} tables in the page`);
 
     let targetTable = null;
     let titleIdx = 0, startIdx = 1, endIdx = 2, durationIdx = 3;
 
-    for (const table of tables) {
-      const headerRow = table.querySelector('tr');
+    for (let tableIdx = 0; tableIdx < tables.length; tableIdx++) {
+      const table = tables[tableIdx];
+
+      // Try to find header row - check thead first, then first tr
+      let headerRow = table.querySelector('thead tr');
+      if (!headerRow) {
+        headerRow = table.querySelector('tr');
+      }
       if (!headerRow) continue;
 
       const headerCells = headerRow.querySelectorAll('th, td');
-      let hasTitle = false, hasStart = false, hasDuration = false;
+      const headerTexts = Array.from(headerCells).map(c => c.textContent?.trim().toLowerCase() || '');
+      log(`Table ${tableIdx}: ${headerCells.length} cells in first row: [${headerTexts.join(', ')}]`);
+
+      let hasTitle = false, hasStart = false, hasEnd = false, hasDuration = false;
 
       headerCells.forEach((cell, idx) => {
         const text = cell.textContent?.trim().toLowerCase() || '';
-        if (text === 'title') { titleIdx = idx; hasTitle = true; }
-        else if (text === 'start') { startIdx = idx; hasStart = true; }
-        else if (text === 'end') { endIdx = idx; }
-        else if (text === 'duration') { durationIdx = idx; hasDuration = true; }
+        // Use includes() for more flexible matching (handles "title:", "start time", etc.)
+        if (text.includes('title')) { titleIdx = idx; hasTitle = true; }
+        else if (text.includes('start')) { startIdx = idx; hasStart = true; }
+        else if (text.includes('end')) { endIdx = idx; hasEnd = true; }
+        else if (text.includes('duration')) { durationIdx = idx; hasDuration = true; }
       });
 
       // Found the right table if it has title, start, and duration columns
       if (hasTitle && hasStart && hasDuration) {
         targetTable = table;
-        log(`Found time details table with ${headerCells.length} columns`);
+        log(`Found time details table (table ${tableIdx}) with title/start/duration headers`, 'success');
+        break;
+      }
+
+      // Fallback: if has start, end, duration but no title header, title is before start
+      if (hasStart && hasEnd && hasDuration) {
+        targetTable = table;
+        titleIdx = startIdx - 1;
+        if (titleIdx < 0) titleIdx = 0;
+        log(`Found time details table (table ${tableIdx}, no title header) with ${headerCells.length} columns`, 'success');
         break;
       }
     }
 
     if (!targetTable) {
-      log('No time details table found with proper headers', 'warn');
+      log('No time details table found with start/end/duration headers', 'warn');
       return result;
     }
 
