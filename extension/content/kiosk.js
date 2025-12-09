@@ -59,6 +59,7 @@
     panel.innerHTML = `
       <div class="fc-lt-header">
         <span class="fc-lt-title">Labor Tracking Assistant</span>
+        <span class="fc-lt-fclm-status" id="fc-lt-fclm-status" title="FCLM Data Status">--</span>
         <button class="fc-lt-minimize" title="Minimize">_</button>
       </div>
       <div class="fc-lt-body">
@@ -70,6 +71,10 @@
         <div class="fc-lt-section hidden" id="fc-lt-badge-section">
           <label>Badge ID</label>
           <input type="text" id="fc-lt-badge" placeholder="Scan or enter badge ID" autocomplete="off">
+          <div class="fc-lt-associate-info hidden" id="fc-lt-associate-info">
+            <div class="fc-lt-associate-name" id="fc-lt-associate-name"></div>
+            <div class="fc-lt-associate-details" id="fc-lt-associate-details"></div>
+          </div>
           <button id="fc-lt-submit-badge" class="fc-lt-btn primary">Submit Badge</button>
           <button id="fc-lt-done" class="fc-lt-btn success">Done</button>
           <button id="fc-lt-back" class="fc-lt-btn secondary">Back</button>
@@ -208,6 +213,56 @@
         border: 1px solid rgba(52, 152, 219, 0.4);
         color: #3498db;
       }
+      .fc-lt-fclm-status {
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: #333;
+        color: #888;
+        margin-left: auto;
+        margin-right: 8px;
+      }
+      .fc-lt-fclm-status.connected {
+        background: rgba(46, 204, 113, 0.2);
+        color: #2ecc71;
+      }
+      .fc-lt-fclm-status.disconnected {
+        background: rgba(231, 76, 60, 0.2);
+        color: #e74c3c;
+      }
+      .fc-lt-associate-info {
+        background: #16213e;
+        border-radius: 4px;
+        padding: 8px;
+        margin: 8px 0;
+      }
+      .fc-lt-associate-info.hidden {
+        display: none;
+      }
+      .fc-lt-associate-name {
+        font-weight: 600;
+        font-size: 14px;
+        color: #fff;
+        margin-bottom: 4px;
+      }
+      .fc-lt-associate-details {
+        font-size: 11px;
+        color: #888;
+      }
+      .fc-lt-associate-details .uph {
+        color: #2ecc71;
+        font-weight: 500;
+      }
+      .fc-lt-associate-details .uph.low {
+        color: #e74c3c;
+      }
+      .fc-lt-associate-info.not-found {
+        background: rgba(231, 76, 60, 0.2);
+        border: 1px solid rgba(231, 76, 60, 0.3);
+      }
+      .fc-lt-associate-info.not-found .fc-lt-associate-name {
+        color: #e74c3c;
+      }
     `;
 
     document.head.appendChild(styles);
@@ -249,6 +304,16 @@
     workCodeInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') submitWorkCode();
     });
+
+    // Badge input - lookup on change
+    badgeInput.addEventListener('input', debounce(async () => {
+      const badgeId = badgeInput.value.trim();
+      if (badgeId.length >= 3) {
+        await lookupAssociate(badgeId);
+      } else {
+        hideAssociateInfo();
+      }
+    }, 300));
 
     // Badge submission
     submitBadgeBtn.addEventListener('click', () => submitBadge());
@@ -333,6 +398,7 @@
       await handleBadgeIdInput(badgeId);
       showPanelMessage('Badge added!', 'success');
       input.value = '';
+      hideAssociateInfo();
 
       // Ready for next badge
       setTimeout(() => {
@@ -400,6 +466,127 @@
     msg.textContent = text;
     msg.className = 'fc-lt-message ' + type;
   }
+
+  // ============== FCLM INTEGRATION ==============
+
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+
+  async function lookupAssociate(badgeId) {
+    console.log('[FC Labor Tracking] Looking up associate:', badgeId);
+
+    try {
+      const response = await browser.runtime.sendMessage({
+        action: 'lookupAssociate',
+        badgeId: badgeId
+      });
+
+      if (response.found && response.associate) {
+        showAssociateInfo(response.associate);
+      } else {
+        showAssociateNotFound(badgeId);
+      }
+    } catch (error) {
+      console.log('[FC Labor Tracking] Lookup error:', error);
+      hideAssociateInfo();
+    }
+  }
+
+  function showAssociateInfo(associate) {
+    const infoDiv = document.getElementById('fc-lt-associate-info');
+    const nameDiv = document.getElementById('fc-lt-associate-name');
+    const detailsDiv = document.getElementById('fc-lt-associate-details');
+
+    if (!infoDiv) return;
+
+    infoDiv.classList.remove('hidden', 'not-found');
+
+    nameDiv.textContent = associate.name || associate.employee_id;
+
+    const uphClass = associate.uph < 50 ? 'uph low' : 'uph';
+    detailsDiv.innerHTML = `
+      ${associate.function_name || 'Unknown function'} |
+      <span class="${uphClass}">${Math.round(associate.uph)} UPH</span> |
+      ${associate.paid_hours_total?.toFixed(1) || 0}h
+    `;
+  }
+
+  function showAssociateNotFound(badgeId) {
+    const infoDiv = document.getElementById('fc-lt-associate-info');
+    const nameDiv = document.getElementById('fc-lt-associate-name');
+    const detailsDiv = document.getElementById('fc-lt-associate-details');
+
+    if (!infoDiv) return;
+
+    infoDiv.classList.remove('hidden');
+    infoDiv.classList.add('not-found');
+
+    nameDiv.textContent = 'Associate not found in FCLM';
+    detailsDiv.textContent = `Badge: ${badgeId} - May be new or not clocked in`;
+  }
+
+  function hideAssociateInfo() {
+    const infoDiv = document.getElementById('fc-lt-associate-info');
+    if (infoDiv) {
+      infoDiv.classList.add('hidden');
+      infoDiv.classList.remove('not-found');
+    }
+  }
+
+  async function updateFclmStatus() {
+    const statusEl = document.getElementById('fc-lt-fclm-status');
+    if (!statusEl) return;
+
+    try {
+      const response = await browser.runtime.sendMessage({
+        action: 'getFclmData'
+      });
+
+      if (response.count > 0) {
+        statusEl.textContent = `${response.count} AAs`;
+        statusEl.className = 'fc-lt-fclm-status connected';
+        statusEl.title = `FCLM: ${response.count} associates loaded (${response.shiftDate})`;
+      } else {
+        statusEl.textContent = 'No data';
+        statusEl.className = 'fc-lt-fclm-status disconnected';
+        statusEl.title = 'FCLM: No associate data - open FCLM portal';
+      }
+    } catch (error) {
+      statusEl.textContent = '--';
+      statusEl.className = 'fc-lt-fclm-status';
+      statusEl.title = 'FCLM: Unable to check status';
+    }
+  }
+
+  // Listen for FCLM data updates
+  browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'fclmDataUpdated') {
+      console.log('[FC Labor Tracking] FCLM data updated:', message.count, 'associates');
+      updateFclmStatus();
+      showPanelMessage(`FCLM: ${message.count} associates loaded`, 'success');
+      setTimeout(() => {
+        const input = document.getElementById('fc-lt-badge');
+        if (input && input.value) {
+          showPanelMessage('Ready for badge', 'info');
+        }
+      }, 2000);
+    }
+  });
+
+  // Initial FCLM status check
+  setTimeout(updateFclmStatus, 1000);
+
+  // Periodic status update
+  setInterval(updateFclmStatus, 30000);
 
   async function handleWorkCodeInput(workCode) {
     console.log('[FC Labor Tracking] Attempting to input work code:', workCode);
