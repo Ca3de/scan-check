@@ -126,32 +126,42 @@
       isClockedIn: false
     };
 
-    // Find the table with time details
-    const table = doc.querySelector('table');
-    if (!table) {
-      log('No time details table found', 'warn');
+    // Find the correct table - look for one with "title", "start", "end", "duration" headers
+    const tables = doc.querySelectorAll('table');
+    log(`Found ${tables.length} tables in the page`);
+
+    let targetTable = null;
+    let titleIdx = 0, startIdx = 1, endIdx = 2, durationIdx = 3;
+
+    for (const table of tables) {
+      const headerRow = table.querySelector('tr');
+      if (!headerRow) continue;
+
+      const headerCells = headerRow.querySelectorAll('th, td');
+      let hasTitle = false, hasStart = false, hasDuration = false;
+
+      headerCells.forEach((cell, idx) => {
+        const text = cell.textContent?.trim().toLowerCase() || '';
+        if (text === 'title') { titleIdx = idx; hasTitle = true; }
+        else if (text === 'start') { startIdx = idx; hasStart = true; }
+        else if (text === 'end') { endIdx = idx; }
+        else if (text === 'duration') { durationIdx = idx; hasDuration = true; }
+      });
+
+      // Found the right table if it has title, start, and duration columns
+      if (hasTitle && hasStart && hasDuration) {
+        targetTable = table;
+        log(`Found time details table with ${headerCells.length} columns`);
+        break;
+      }
+    }
+
+    if (!targetTable) {
+      log('No time details table found with proper headers', 'warn');
       return result;
     }
 
-    // Parse table rows - find header to determine column indices
-    const rows = table.querySelectorAll('tr');
-    let titleIdx = 0, startIdx = 1, endIdx = 2, durationIdx = 3;
-
-    // Check header row to find correct column indices
-    const headerRow = rows[0];
-    if (headerRow) {
-      const headerCells = headerRow.querySelectorAll('th, td');
-      log(`Header row has ${headerCells.length} cells`);
-      headerCells.forEach((cell, idx) => {
-        const text = cell.textContent?.trim().toLowerCase() || '';
-        log(`Header cell ${idx}: "${text}"`);
-        if (text === 'title') titleIdx = idx;
-        else if (text === 'start') startIdx = idx;
-        else if (text === 'end') endIdx = idx;
-        else if (text === 'duration') durationIdx = idx;
-      });
-    }
-
+    const rows = targetTable.querySelectorAll('tr');
     log(`Column indices - title: ${titleIdx}, start: ${startIdx}, end: ${endIdx}, duration: ${durationIdx}`);
     log(`Total rows in table: ${rows.length}`);
 
