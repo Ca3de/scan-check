@@ -141,8 +141,10 @@
     const headerRow = rows[0];
     if (headerRow) {
       const headerCells = headerRow.querySelectorAll('th, td');
+      log(`Header row has ${headerCells.length} cells`);
       headerCells.forEach((cell, idx) => {
         const text = cell.textContent?.trim().toLowerCase() || '';
+        log(`Header cell ${idx}: "${text}"`);
         if (text === 'title') titleIdx = idx;
         else if (text === 'start') startIdx = idx;
         else if (text === 'end') endIdx = idx;
@@ -151,6 +153,7 @@
     }
 
     log(`Column indices - title: ${titleIdx}, start: ${startIdx}, end: ${endIdx}, duration: ${durationIdx}`);
+    log(`Total rows in table: ${rows.length}`);
 
     rows.forEach((row, index) => {
       if (index === 0) return; // Skip header row
