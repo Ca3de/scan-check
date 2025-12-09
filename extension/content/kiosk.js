@@ -459,52 +459,82 @@
     inputField.focus();
     inputField.value = '';
 
-    // Set the value directly
-    inputField.value = badgeId;
+    // Set the value using native setter to trigger React/Vue reactivity
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    nativeInputValueSetter.call(inputField, badgeId);
 
-    // Dispatch events
+    // Dispatch input event
     inputField.dispatchEvent(new Event('input', { bubbles: true }));
     inputField.dispatchEvent(new Event('change', { bubbles: true }));
 
     // Small delay then simulate Enter to add the badge
-    await sleep(100);
+    await sleep(150);
     await simulateEnterKey(inputField);
 
     return { success: true };
   }
 
   async function simulateEnterKey(element) {
-    // Create and dispatch keydown event for Enter
-    const enterDown = new KeyboardEvent('keydown', {
+    // Make sure element has focus
+    element.focus();
+
+    // Method 1: Try jQuery trigger if available (the page uses jQuery)
+    if (typeof jQuery !== 'undefined') {
+      try {
+        const $element = jQuery(element);
+        const jqEvent = jQuery.Event('keydown', {
+          key: 'Enter',
+          keyCode: 13,
+          which: 13
+        });
+        $element.trigger(jqEvent);
+
+        const jqKeypress = jQuery.Event('keypress', {
+          key: 'Enter',
+          keyCode: 13,
+          which: 13
+        });
+        $element.trigger(jqKeypress);
+
+        const jqKeyup = jQuery.Event('keyup', {
+          key: 'Enter',
+          keyCode: 13,
+          which: 13
+        });
+        $element.trigger(jqKeyup);
+
+        console.log('[FC Labor Tracking] Triggered Enter via jQuery');
+        return;
+      } catch (e) {
+        console.log('[FC Labor Tracking] jQuery trigger failed:', e);
+      }
+    }
+
+    // Method 2: Native KeyboardEvent dispatch
+    const eventOptions = {
       key: 'Enter',
       code: 'Enter',
       keyCode: 13,
       which: 13,
+      charCode: 13,
       bubbles: true,
-      cancelable: true
-    });
+      cancelable: true,
+      view: window
+    };
+
+    // Create and dispatch keydown event
+    const enterDown = new KeyboardEvent('keydown', eventOptions);
     element.dispatchEvent(enterDown);
 
-    // Also dispatch keypress
-    const enterPress = new KeyboardEvent('keypress', {
-      key: 'Enter',
-      code: 'Enter',
-      keyCode: 13,
-      which: 13,
-      bubbles: true,
-      cancelable: true
-    });
+    // Dispatch keypress
+    const enterPress = new KeyboardEvent('keypress', eventOptions);
     element.dispatchEvent(enterPress);
 
-    // And keyup
-    const enterUp = new KeyboardEvent('keyup', {
-      key: 'Enter',
-      code: 'Enter',
-      keyCode: 13,
-      which: 13,
-      bubbles: true
-    });
+    // Dispatch keyup
+    const enterUp = new KeyboardEvent('keyup', eventOptions);
     element.dispatchEvent(enterUp);
+
+    console.log('[FC Labor Tracking] Dispatched Enter via native events');
   }
 
   function sleep(ms) {
