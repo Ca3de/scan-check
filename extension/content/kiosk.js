@@ -591,9 +591,9 @@
   // MPV (Multiple Path Violation) Configuration
   // These are the restricted paths that can cause MPV
   const MPV_RESTRICTED_PATHS = {
-    'C-Returns_StowSweep': ['STOWSWEEP', 'SWEEP', 'CRESW', 'STOW_SWEEP', 'STOWSW'],
-    'C-Returns_EndofLine': ['CREOL', 'EOL', 'ENDOFLINE', 'END_OF_LINE'],
-    'Vreturns WaterSpider': ['VRWS', 'WATERSPIDER', 'WS', 'WATER_SPIDER', 'VRETWS']
+    'C-Returns_StowSweep': ['STWSWP', 'STOWSWEEP', 'SWEEP', 'CRESW', 'STOW_SWEEP', 'STOWSW', 'STSW'],
+    'C-Returns_EndofLine': ['CREOL', 'EOL', 'ENDOFLINE', 'END_OF_LINE', 'ENDLINE'],
+    'Vreturns WaterSpider': ['VRWS', 'WATERSPIDER', 'VRETWS', 'VRWATER']
   };
 
   // Max time allowed on a restricted path (4 hours 30 minutes in minutes)
@@ -604,13 +604,18 @@
     if (!workCode) return null;
     const upperCode = workCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+    console.log('[MPV] Matching work code:', upperCode);
+
     for (const [pathTitle, codes] of Object.entries(MPV_RESTRICTED_PATHS)) {
       for (const code of codes) {
-        if (upperCode.includes(code) || code.includes(upperCode)) {
+        // Exact match or work code starts with the pattern
+        if (upperCode === code || upperCode.startsWith(code) || code.startsWith(upperCode)) {
+          console.log('[MPV] Work code', upperCode, 'matched to', pathTitle, 'via', code);
           return pathTitle;
         }
       }
     }
+    console.log('[MPV] Work code', upperCode, 'did not match any restricted path');
     return null;
   }
 
