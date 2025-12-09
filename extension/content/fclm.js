@@ -126,7 +126,8 @@
       isClockedIn: false
     };
 
-    // Find the correct table - look for one with "title", "start", "end", "duration" headers
+    // Find the correct table - look for one with "start", "end", "duration" headers
+    // Note: The "title" column may not have a header, it's just the first column
     const tables = doc.querySelectorAll('table');
     log(`Found ${tables.length} tables in the page`);
 
@@ -138,26 +139,30 @@
       if (!headerRow) continue;
 
       const headerCells = headerRow.querySelectorAll('th, td');
-      let hasTitle = false, hasStart = false, hasDuration = false;
+      let hasStart = false, hasEnd = false, hasDuration = false;
 
       headerCells.forEach((cell, idx) => {
         const text = cell.textContent?.trim().toLowerCase() || '';
-        if (text === 'title') { titleIdx = idx; hasTitle = true; }
+        if (text === 'title') { titleIdx = idx; }
         else if (text === 'start') { startIdx = idx; hasStart = true; }
-        else if (text === 'end') { endIdx = idx; }
+        else if (text === 'end') { endIdx = idx; hasEnd = true; }
         else if (text === 'duration') { durationIdx = idx; hasDuration = true; }
       });
 
-      // Found the right table if it has title, start, and duration columns
-      if (hasTitle && hasStart && hasDuration) {
+      // Found the right table if it has start, end, and duration columns
+      // Title column is assumed to be before "start" column
+      if (hasStart && hasEnd && hasDuration) {
         targetTable = table;
+        titleIdx = startIdx - 1;  // Title is the column before start
+        if (titleIdx < 0) titleIdx = 0;
         log(`Found time details table with ${headerCells.length} columns`);
+        log(`Header cells: ${Array.from(headerCells).map(c => c.textContent?.trim()).join(', ')}`);
         break;
       }
     }
 
     if (!targetTable) {
-      log('No time details table found with proper headers', 'warn');
+      log('No time details table found with start/end/duration headers', 'warn');
       return result;
     }
 
