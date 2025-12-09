@@ -71,19 +71,14 @@
 
   // ============== FETCH EMPLOYEE TIME DETAILS ==============
 
-  async function fetchEmployeeTimeDetails(employeeId) {
-    log(`Fetching time details for employee: ${employeeId}`);
-
-    // Get shift date range based on current time
+  // Build the URL for employee time details
+  function buildTimeDetailsUrl(employeeId) {
     const shiftRange = getShiftDateRange();
-    log(`Shift range: ${shiftRange.startDate} ${shiftRange.startHour}:00 to ${shiftRange.endDate} ${shiftRange.endHour}:00`);
 
-    // Build URL with proper date range parameters for night shift
-    // Note: startDateDay should be the END date (today), based on FCLM URL pattern
     const params = new URLSearchParams({
       employeeId: employeeId,
       warehouseId: CONFIG.WAREHOUSE_ID,
-      startDateDay: shiftRange.endDate,  // Use END date here (matches FCLM pattern)
+      startDateDay: shiftRange.endDate,
       maxIntradayDays: '1',
       spanType: 'Intraday',
       startDateIntraday: shiftRange.startDate,
@@ -94,22 +89,162 @@
       endMinuteIntraday: '0'
     });
 
-    // Match FCLM URL pattern with ?& at start - use absolute URL
-    // Hardcode the base URL since window.location.origin might not work in extension context
-    const url = `https://fclm-portal.amazon.com/employee/timeDetails?&${params.toString()}`;
-    log(`Fetching URL: ${url}`);
+    return `https://fclm-portal.amazon.com/employee/timeDetails?&${params.toString()}`;
+  }
 
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  async function fetchEmployeeTimeDetails(employeeId) {
+    log(`Fetching time details for employee: ${employeeId}`);
+
+    const shiftRange = getShiftDateRange();
+    log(`Shift range: ${shiftRange.startDate} ${shiftRange.startHour}:00 to ${shiftRange.endDate} ${shiftRange.endHour}:00`);
+
+    const url = buildTimeDetailsUrl(employeeId);
+    log(`Target URL: ${url}`);
+
+    // Method 1: Try to scrape from live DOM if we're already on a timeDetails page
+    // or if we can navigate to it
+    if (window.location.href.includes('/employee/timeDetails')) {
+      log('Already on timeDetails page, scraping live DOM...');
+      return scrapeTimeDetailsFromLiveDOM(employeeId);
+    }
+
+    // Method 2: Navigate to the URL and scrape after load
+    // This will reload the FCLM tab with the employee's time details
+    log('Navigating to timeDetails page...');
+
+    // Store the request in sessionStorage so we can complete it after navigation
+    sessionStorage.setItem('fc_pending_lookup', JSON.stringify({
+      employeeId,
+      timestamp: Date.now()
+    }));
+
+    // Navigate to the time details page
+    window.location.href = url;
+
+    // Return a pending response - the actual data will be sent after page loads
+    return {
+      employeeId,
+      sessions: [],
+      pending: true,
+      message: 'Navigating to time details page...'
+    };
+  }
+
+  // Scrape time details from the live DOM (after JavaScript has rendered)
+  function scrapeTimeDetailsFromLiveDOM(employeeId) {
+    log('Scraping time details from live DOM...');
+
+    const result = {
+      employeeId: employeeId,
+      sessions: [],
+      currentActivity: null,
+      totalHours: 0,
+      isClockedIn: false
+    };
+
+    // Find all tables in the live DOM
+    const tables = document.querySelectorAll('table');
+    log(`Found ${tables.length} tables in live DOM`);
+
+    // Look for the time details table with title/start/end/duration columns
+    for (let tableIdx = 0; tableIdx < tables.length; tableIdx++) {
+      const table = tables[tableIdx];
+      const rows = table.querySelectorAll('tr');
+
+      if (rows.length < 2) continue;
+
+      // Check first row for headers
+      const headerRow = rows[0];
+      const headerCells = headerRow.querySelectorAll('th, td');
+      const headerTexts = Array.from(headerCells).map(c => c.textContent?.trim().toLowerCase() || '');
+
+      log(`Live DOM Table ${tableIdx}: ${headerCells.length} headers: [${headerTexts.join(', ')}]`);
+
+      // Find column indices
+      let titleIdx = -1, startIdx = -1, endIdx = -1, durationIdx = -1;
+      headerTexts.forEach((text, idx) => {
+        if (text.includes('title')) titleIdx = idx;
+        else if (text.includes('start')) startIdx = idx;
+        else if (text.includes('end')) endIdx = idx;
+        else if (text.includes('duration')) durationIdx = idx;
+      });
+
+      if (titleIdx >= 0 && startIdx >= 0 && durationIdx >= 0) {
+        log(`Found time details table (table ${tableIdx})`, 'success');
+
+        // Parse data rows
+        for (let rowIdx = 1; rowIdx < rows.length; rowIdx++) {
+          const cells = rows[rowIdx].querySelectorAll('td');
+          if (cells.length > durationIdx) {
+            const title = cells[titleIdx]?.textContent?.trim() || '';
+            const start = cells[startIdx]?.textContent?.trim() || '';
+            const end = endIdx >= 0 ? (cells[endIdx]?.textContent?.trim() || '') : '';
+            const duration = cells[durationIdx]?.textContent?.trim() || '';
+
+            if (title && !title.includes('OffClock') && !title.includes('OnClock')) {
+              const session = {
+                title,
+                start,
+                end,
+                duration,
+                durationMinutes: parseDurationToMinutes(duration)
+              };
+              result.sessions.push(session);
+              log(`Parsed: ${title} - ${duration} (${session.durationMinutes} mins)`);
+
+              if (!end || end === '') {
+                result.currentActivity = session;
+                result.isClockedIn = true;
+              }
+            }
+          }
+        }
+
+        break; // Found the table, stop searching
       }
+    }
 
-      const html = await response.text();
-      return parseTimeDetailsHtml(html, employeeId);
-    } catch (error) {
-      log(`Error fetching time details: ${error.message}`, 'error');
-      throw error;
+    // Try to find "Hours on Task" from the page
+    const pageText = document.body.textContent || '';
+    const hoursMatch = pageText.match(/Hours on Task:\s*([\d.]+)\s*\/\s*([\d.]+)/);
+    if (hoursMatch) {
+      result.hoursOnTask = parseFloat(hoursMatch[1]);
+      result.totalScheduledHours = parseFloat(hoursMatch[2]);
+    }
+
+    log(`Scraped ${result.sessions.length} sessions from live DOM`, 'success');
+    return result;
+  }
+
+  // Check if we arrived here from a lookup navigation
+  function checkPendingLookup() {
+    const pendingStr = sessionStorage.getItem('fc_pending_lookup');
+    if (pendingStr && window.location.href.includes('/employee/timeDetails')) {
+      sessionStorage.removeItem('fc_pending_lookup');
+
+      const pending = JSON.parse(pendingStr);
+      const age = Date.now() - pending.timestamp;
+
+      // Only process if the request is recent (within 30 seconds)
+      if (age < 30000) {
+        log(`Processing pending lookup for ${pending.employeeId} (${age}ms old)`);
+
+        // Wait for the page to fully render
+        setTimeout(() => {
+          const result = scrapeTimeDetailsFromLiveDOM(pending.employeeId);
+
+          // Send the result back to the kiosk via background script
+          browser.runtime.sendMessage({
+            action: 'forwardToKiosk',
+            payload: {
+              action: 'timeDetailsResult',
+              data: result
+            }
+          }).catch(err => {
+            log(`Error sending result to kiosk: ${err.message}`, 'error');
+          });
+        }, 1500); // Wait 1.5s for JavaScript to render the table
+      }
     }
   }
 
@@ -439,6 +574,13 @@
   log('='.repeat(50));
   log('FCLM Ready for employee lookups!', 'success');
   log(`Warehouse: ${CONFIG.WAREHOUSE_ID}`);
+  log(`Current URL: ${window.location.href}`);
   log('='.repeat(50));
+
+  // Check if we arrived here from a pending lookup (after navigation)
+  // Wait a bit for the page to render before checking
+  setTimeout(() => {
+    checkPendingLookup();
+  }, 2000);
 
 })();

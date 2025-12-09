@@ -23,7 +23,10 @@
   // Create floating panel UI
   createFloatingPanel();
 
-  // Listen for messages from the popup
+  // Track pending badge lookup while waiting for FCLM navigation
+  let pendingBadgeLookup = null;
+
+  // Listen for messages from the popup and other scripts
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[FC Labor Tracking] Received message:', message);
 
@@ -47,6 +50,35 @@
         isBadgePage,
         url: window.location.href
       });
+      return false;
+    }
+
+    // Handle async time details result from FCLM (after navigation)
+    if (message.action === 'timeDetailsResult') {
+      console.log('[FC Labor Tracking] Received async time details result:', message.data);
+
+      // Get current work code for MPV check
+      browser.runtime.sendMessage({
+        action: 'getCurrentWorkCode'
+      }).then(response => {
+        const currentWorkCode = response?.workCode || null;
+        showAssociateTimeDetails(message.data, currentWorkCode);
+      });
+
+      sendResponse({ received: true });
+      return false;
+    }
+
+    // Handle FCLM connection status changes
+    if (message.action === 'fclmConnected') {
+      updateFclmStatus();
+      sendResponse({ received: true });
+      return false;
+    }
+
+    if (message.action === 'fclmDisconnected') {
+      updateFclmStatus();
+      sendResponse({ received: true });
       return false;
     }
   });
@@ -560,12 +592,27 @@
       const currentWorkCode = workCodeResponse?.workCode || null;
       console.log('[FC Labor Tracking] Current work code for MPV check:', currentWorkCode);
 
+      // Store the badge ID in case we get an async result later
+      pendingBadgeLookup = badgeId;
+
       const response = await browser.runtime.sendMessage({
         action: 'fetchEmployeeTimeDetails',
         employeeId: badgeId
       });
 
       if (response.success && response.data) {
+        // Check if FCLM is navigating to fetch data (will send result async later)
+        if (response.data.pending) {
+          console.log('[FC Labor Tracking] FCLM is navigating to fetch data...');
+          showAssociateLoading(badgeId);
+          const detailsDiv = document.getElementById('fc-lt-associate-details');
+          if (detailsDiv) {
+            detailsDiv.textContent = 'Loading from FCLM (navigating)...';
+          }
+          // Result will come via 'timeDetailsResult' message later
+          return;
+        }
+
         showAssociateTimeDetails(response.data, currentWorkCode);
       } else {
         showAssociateNotFound(badgeId, response.error);
