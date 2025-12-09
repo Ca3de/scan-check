@@ -17,6 +17,9 @@
   console.log('[FC Labor Tracking] Page type:', isWorkCodePage ? 'Work Code' : (isBadgePage ? 'Badge ID' : 'Unknown'));
   console.log('[FC Labor Tracking] Warehouse ID:', warehouseId);
 
+  // Track current MPV check result to block submission if needed
+  let currentMpvCheckResult = null;
+
   // Create floating panel UI
   createFloatingPanel();
 
@@ -439,6 +442,22 @@
       return;
     }
 
+    // CHECK FOR MPV RISK - BLOCK SUBMISSION IF DETECTED
+    if (currentMpvCheckResult && currentMpvCheckResult.hasMpvRisk) {
+      console.log('[FC Labor Tracking] BLOCKED - MPV risk detected!', currentMpvCheckResult);
+      showPanelMessage('🚫 BLOCKED - MPV Risk! Cannot submit this badge.', 'error');
+
+      // Flash the warning to make it more obvious
+      const infoDiv = document.getElementById('fc-lt-associate-info');
+      if (infoDiv) {
+        infoDiv.style.transform = 'scale(1.05)';
+        setTimeout(() => { infoDiv.style.transform = 'scale(1)'; }, 200);
+      }
+
+      // DO NOT submit - return early
+      return;
+    }
+
     try {
       showPanelMessage('Submitting badge...', 'info');
       await handleBadgeIdInput(badgeId);
@@ -749,6 +768,10 @@
     // Check for MPV risk based on current work code
     const mpvCheck = checkForMpvRisk(data.sessions, currentWorkCode);
 
+    // Store the MPV check result to block submission if needed
+    currentMpvCheckResult = mpvCheck;
+    console.log('[FC Labor Tracking] MPV check result stored:', mpvCheck.hasMpvRisk ? 'BLOCKED' : 'OK');
+
     // Find current activity
     const currentActivity = data.currentActivity;
     const isClockedIn = data.isClockedIn;
@@ -828,19 +851,24 @@
 
     if (!infoDiv) return;
 
-    infoDiv.classList.remove('hidden');
+    infoDiv.classList.remove('hidden', 'mpv-warning', 'mpv-ok');
     infoDiv.classList.add('not-found');
 
     nameDiv.textContent = 'Lookup failed';
     detailsDiv.textContent = reason || `Badge: ${badgeId} - Not found in FCLM`;
+
+    // Clear the MPV check result since lookup failed
+    currentMpvCheckResult = null;
   }
 
   function hideAssociateInfo() {
     const infoDiv = document.getElementById('fc-lt-associate-info');
     if (infoDiv) {
       infoDiv.classList.add('hidden');
-      infoDiv.classList.remove('not-found');
+      infoDiv.classList.remove('not-found', 'mpv-warning', 'mpv-ok');
     }
+    // Clear the MPV check result
+    currentMpvCheckResult = null;
   }
 
   async function updateFclmStatus() {
