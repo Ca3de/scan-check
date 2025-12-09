@@ -485,23 +485,38 @@
     console.log('[FC Labor Tracking] Looking up associate:', badgeId);
 
     try {
+      // Show loading state
+      showAssociateLoading(badgeId);
+
       const response = await browser.runtime.sendMessage({
-        action: 'lookupAssociate',
-        badgeId: badgeId
+        action: 'fetchEmployeeTimeDetails',
+        employeeId: badgeId
       });
 
-      if (response.found && response.associate) {
-        showAssociateInfo(response.associate);
+      if (response.success && response.data) {
+        showAssociateTimeDetails(response.data);
       } else {
-        showAssociateNotFound(badgeId);
+        showAssociateNotFound(badgeId, response.error);
       }
     } catch (error) {
       console.log('[FC Labor Tracking] Lookup error:', error);
-      hideAssociateInfo();
+      showAssociateNotFound(badgeId, 'FCLM not connected');
     }
   }
 
-  function showAssociateInfo(associate) {
+  function showAssociateLoading(badgeId) {
+    const infoDiv = document.getElementById('fc-lt-associate-info');
+    const nameDiv = document.getElementById('fc-lt-associate-name');
+    const detailsDiv = document.getElementById('fc-lt-associate-details');
+
+    if (!infoDiv) return;
+
+    infoDiv.classList.remove('hidden', 'not-found');
+    nameDiv.textContent = 'Looking up...';
+    detailsDiv.textContent = `Badge: ${badgeId}`;
+  }
+
+  function showAssociateTimeDetails(data) {
     const infoDiv = document.getElementById('fc-lt-associate-info');
     const nameDiv = document.getElementById('fc-lt-associate-name');
     const detailsDiv = document.getElementById('fc-lt-associate-details');
@@ -510,17 +525,33 @@
 
     infoDiv.classList.remove('hidden', 'not-found');
 
-    nameDiv.textContent = associate.name || associate.employee_id;
+    // Find current activity
+    const currentActivity = data.currentActivity;
+    const isClockedIn = data.isClockedIn;
 
-    const uphClass = associate.uph < 50 ? 'uph low' : 'uph';
-    detailsDiv.innerHTML = `
-      ${associate.function_name || 'Unknown function'} |
-      <span class="${uphClass}">${Math.round(associate.uph)} UPH</span> |
-      ${associate.paid_hours_total?.toFixed(1) || 0}h
-    `;
+    // Display employee ID and status
+    nameDiv.textContent = `Badge: ${data.employeeId}`;
+
+    if (currentActivity) {
+      const statusClass = isClockedIn ? 'uph' : 'uph low';
+      detailsDiv.innerHTML = `
+        <strong>${currentActivity.title}</strong><br>
+        <span class="${statusClass}">${isClockedIn ? 'Active' : 'Inactive'}</span> |
+        Duration: ${currentActivity.duration || 'ongoing'}
+      `;
+    } else if (data.sessions.length > 0) {
+      // Show most recent session
+      const lastSession = data.sessions[data.sessions.length - 1];
+      detailsDiv.innerHTML = `
+        Last: <strong>${lastSession.title}</strong><br>
+        ${data.hoursOnTask ? `Hours: ${data.hoursOnTask.toFixed(1)}h` : `Sessions: ${data.sessions.length}`}
+      `;
+    } else {
+      detailsDiv.textContent = 'No time details found for today';
+    }
   }
 
-  function showAssociateNotFound(badgeId) {
+  function showAssociateNotFound(badgeId, reason) {
     const infoDiv = document.getElementById('fc-lt-associate-info');
     const nameDiv = document.getElementById('fc-lt-associate-name');
     const detailsDiv = document.getElementById('fc-lt-associate-details');
@@ -530,8 +561,8 @@
     infoDiv.classList.remove('hidden');
     infoDiv.classList.add('not-found');
 
-    nameDiv.textContent = 'Associate not found in FCLM';
-    detailsDiv.textContent = `Badge: ${badgeId} - May be new or not clocked in`;
+    nameDiv.textContent = 'Lookup failed';
+    detailsDiv.textContent = reason || `Badge: ${badgeId} - Not found in FCLM`;
   }
 
   function hideAssociateInfo() {
@@ -548,17 +579,17 @@
 
     try {
       const response = await browser.runtime.sendMessage({
-        action: 'getFclmData'
+        action: 'checkFclmConnection'
       });
 
-      if (response.count > 0) {
-        statusEl.textContent = `${response.count} AAs`;
+      if (response.connected) {
+        statusEl.textContent = 'FCLM Ready';
         statusEl.className = 'fc-lt-fclm-status connected';
-        statusEl.title = `FCLM: ${response.count} associates loaded (${response.shiftDate})`;
+        statusEl.title = 'FCLM connected - will lookup employee on badge scan';
       } else {
-        statusEl.textContent = 'No data';
+        statusEl.textContent = 'FCLM Offline';
         statusEl.className = 'fc-lt-fclm-status disconnected';
-        statusEl.title = 'FCLM: No associate data - open FCLM portal';
+        statusEl.title = 'Open fclm-portal.amazon.com to enable lookups';
       }
     } catch (error) {
       statusEl.textContent = '--';
@@ -567,18 +598,17 @@
     }
   }
 
-  // Listen for FCLM data updates
+  // Listen for FCLM connection status changes
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'fclmDataUpdated') {
-      console.log('[FC Labor Tracking] FCLM data updated:', message.count, 'associates');
+    if (message.action === 'fclmConnected') {
+      console.log('[FC Labor Tracking] FCLM connected');
       updateFclmStatus();
-      showPanelMessage(`FCLM: ${message.count} associates loaded`, 'success');
-      setTimeout(() => {
-        const input = document.getElementById('fc-lt-badge');
-        if (input && input.value) {
-          showPanelMessage('Ready for badge', 'info');
-        }
-      }, 2000);
+      showPanelMessage('FCLM connected!', 'success');
+    }
+    if (message.action === 'fclmDisconnected') {
+      console.log('[FC Labor Tracking] FCLM disconnected');
+      updateFclmStatus();
+      showPanelMessage('FCLM disconnected', 'error');
     }
   });
 
