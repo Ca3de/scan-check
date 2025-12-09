@@ -27,12 +27,16 @@
   let lookupInProgress = false;
   let lookupPromise = null;
 
+  // Track if extension is actively being used (to avoid intercepting direct scans)
+  // Only intercept if user has engaged with our panel or we've started a lookup
+  let extensionEngaged = false;
+
   // Create floating panel UI
   createFloatingPanel();
 
-  // On badge page, intercept native form submission to enforce MPV check
+  // On badge page, set up native form watching (not full interception)
   if (isBadgePage) {
-    interceptNativeFormSubmission();
+    setupNativeFormWatching();
   }
 
   // Listen for messages from the popup and other scripts
@@ -387,11 +391,18 @@
       if (e.key === 'Enter') submitWorkCode();
     });
 
+    // Mark extension as engaged when user focuses on our badge input
+    badgeInput.addEventListener('focus', () => {
+      extensionEngaged = true;
+      console.log('[FC Labor Tracking] Extension engaged (panel focus)');
+    });
+
     // Badge input - lookup on change (with shorter debounce for scanner)
     // Scanners type fast and send Enter at the end, so we need to be quick
     badgeInput.addEventListener('input', debounce(async () => {
       const badgeId = badgeInput.value.trim();
       if (badgeId.length >= 3) {
+        extensionEngaged = true; // Mark engaged when typing in panel
         // Start lookup and track it
         lookupInProgress = true;
         lookupPromise = lookupAssociate(badgeId).finally(() => {
@@ -405,9 +416,13 @@
     }, 150)); // Reduced debounce time for faster scanner response
 
     // Badge submission - wait for lookup if in progress
-    submitBadgeBtn.addEventListener('click', () => submitBadge());
+    submitBadgeBtn.addEventListener('click', () => {
+      extensionEngaged = true;
+      submitBadge();
+    });
     badgeInput.addEventListener('keypress', async (e) => {
       if (e.key === 'Enter') {
+        extensionEngaged = true;
         e.preventDefault(); // Prevent default form submission
         await submitBadge();
       }
@@ -538,6 +553,7 @@
       input.value = '';
       hideAssociateInfo();
       currentMpvCheckResult = null; // Reset for next badge
+      extensionEngaged = false; // Reset engagement for next badge
 
       // Ready for next badge
       setTimeout(() => {
@@ -549,9 +565,9 @@
     }
   }
 
-  // Intercept native form submission on badge page to enforce MPV check
-  function interceptNativeFormSubmission() {
-    console.log('[FC Labor Tracking] Setting up native form interception on badge page');
+  // Watch native form for MPV check - only intercept when extension is engaged
+  function setupNativeFormWatching() {
+    console.log('[FC Labor Tracking] Setting up native form watching on badge page');
 
     // Find the native badge input and form
     const nativeBadgeInput = document.getElementById('trackingBadgeId') ||
@@ -565,30 +581,26 @@
     const nativeForm = nativeBadgeInput.closest('form');
     console.log('[FC Labor Tracking] Found native badge input and form:', !!nativeForm);
 
-    // Watch for changes to the native input (scanner inputs here)
-    nativeBadgeInput.addEventListener('input', debounce(async () => {
+    // Sync native input to panel (for display purposes only, don't auto-engage)
+    nativeBadgeInput.addEventListener('input', () => {
       const badgeId = nativeBadgeInput.value.trim();
-      console.log('[FC Labor Tracking] Native input changed:', badgeId);
-
-      // Sync to our panel input
+      // Sync to our panel input for display
       const panelInput = document.getElementById('fc-lt-badge');
       if (panelInput && panelInput.value !== badgeId) {
         panelInput.value = badgeId;
       }
+    });
 
-      if (badgeId.length >= 3) {
-        lookupInProgress = true;
-        lookupPromise = lookupAssociate(badgeId).finally(() => {
-          lookupInProgress = false;
-        });
-        await lookupPromise;
-      }
-    }, 100)); // Very short debounce for native input
-
-    // Intercept Enter key on native input
+    // Only intercept Enter if extension is engaged
     nativeBadgeInput.addEventListener('keydown', async (e) => {
       if (e.key === 'Enter') {
-        console.log('[FC Labor Tracking] Enter pressed on native input - intercepting');
+        // Only intercept if extension has been actively used
+        if (!extensionEngaged) {
+          console.log('[FC Labor Tracking] Enter on native input - extension not engaged, allowing native submit');
+          return; // Let native form submit
+        }
+
+        console.log('[FC Labor Tracking] Enter pressed on native input - extension engaged, intercepting');
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -601,46 +613,51 @@
 
         await submitBadge();
       }
-    }, true); // Use capture phase to intercept before other handlers
+    }, true); // Use capture phase
 
-    // Also intercept form submission directly
+    // Only intercept form submit if extension is engaged
     if (nativeForm) {
       nativeForm.addEventListener('submit', async (e) => {
-        console.log('[FC Labor Tracking] Form submit intercepted');
+        if (!extensionEngaged) {
+          console.log('[FC Labor Tracking] Form submit - extension not engaged, allowing native submit');
+          return; // Let native form submit
+        }
 
-        // Always prevent default - we'll submit manually if allowed
+        console.log('[FC Labor Tracking] Form submit intercepted - extension engaged');
         e.preventDefault();
         e.stopPropagation();
 
-        // Sync badge to our panel and submit through our logic
         const panelInput = document.getElementById('fc-lt-badge');
         if (panelInput) {
           panelInput.value = nativeBadgeInput.value;
         }
 
         await submitBadge();
-      }, true); // Use capture phase
+      }, true);
     }
 
-    // Watch for Done button clicks too
+    // Only intercept Done button if extension is engaged
     const doneButton = document.querySelector('input[type="submit"][value="Done"]') ||
                        document.querySelector('input[type="submit"]');
     if (doneButton) {
       doneButton.addEventListener('click', async (e) => {
-        // Only intercept if there's a badge being entered
         const badgeId = nativeBadgeInput.value.trim();
-        if (badgeId.length > 0) {
-          console.log('[FC Labor Tracking] Done button clicked with badge - intercepting');
-          e.preventDefault();
-          e.stopPropagation();
 
-          const panelInput = document.getElementById('fc-lt-badge');
-          if (panelInput) {
-            panelInput.value = badgeId;
-          }
-
-          await submitBadge();
+        if (!extensionEngaged || badgeId.length === 0) {
+          console.log('[FC Labor Tracking] Done button - extension not engaged or no badge, allowing native');
+          return; // Let native click through
         }
+
+        console.log('[FC Labor Tracking] Done button clicked with badge - extension engaged, intercepting');
+        e.preventDefault();
+        e.stopPropagation();
+
+        const panelInput = document.getElementById('fc-lt-badge');
+        if (panelInput) {
+          panelInput.value = badgeId;
+        }
+
+        await submitBadge();
       }, true);
     }
   }

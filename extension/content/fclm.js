@@ -101,16 +101,18 @@
     const url = buildTimeDetailsUrl(employeeId);
     log(`Target URL: ${url}`);
 
-    // Method 1: Try to scrape from live DOM if we're already on a timeDetails page
-    // or if we can navigate to it
-    if (window.location.href.includes('/employee/timeDetails')) {
-      log('Already on timeDetails page, scraping live DOM...');
+    // Check if we're already on the CORRECT employee's timeDetails page
+    const currentUrl = window.location.href;
+    const isOnTimeDetailsPage = currentUrl.includes('/employee/timeDetails');
+    const isCorrectEmployee = currentUrl.includes(`employeeId=${employeeId}`);
+
+    if (isOnTimeDetailsPage && isCorrectEmployee) {
+      log(`Already on timeDetails page for employee ${employeeId}, scraping live DOM...`);
       return scrapeTimeDetailsFromLiveDOM(employeeId);
     }
 
-    // Method 2: Navigate to the URL and scrape after load
-    // This will reload the FCLM tab with the employee's time details
-    log('Navigating to timeDetails page...');
+    // Need to navigate to the correct employee's page
+    log(`Navigating to timeDetails page for employee ${employeeId}...`);
 
     // Store the request in sessionStorage so we can complete it after navigation
     sessionStorage.setItem('fc_pending_lookup', JSON.stringify({
