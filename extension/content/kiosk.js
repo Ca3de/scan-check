@@ -263,6 +263,25 @@
       .fc-lt-associate-info.not-found .fc-lt-associate-name {
         color: #e74c3c;
       }
+      .fc-lt-associate-info.mpv-warning {
+        background: rgba(231, 76, 60, 0.3);
+        border: 2px solid #e74c3c;
+        animation: mpv-pulse 1s ease-in-out infinite;
+      }
+      @keyframes mpv-pulse {
+        0%, 100% { box-shadow: 0 0 5px rgba(231, 76, 60, 0.5); }
+        50% { box-shadow: 0 0 15px rgba(231, 76, 60, 0.8); }
+      }
+      .mpv-alert {
+        background: #e74c3c;
+        color: #fff;
+        padding: 6px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 12px;
+        margin-bottom: 6px;
+        text-align: center;
+      }
     `;
 
     document.head.appendChild(styles);
@@ -516,6 +535,29 @@
     detailsDiv.textContent = `Badge: ${badgeId}`;
   }
 
+  // MPV Warning titles - if AA has worked these, warn about Multiple Path Violation
+  const MPV_WARNING_TITLES = [
+    'C-Returns_StowSweep',
+    'C-Returns_EndofLine',
+    'Vreturns WaterSpider'
+  ];
+
+  function checkForMpvRisk(sessions) {
+    // Check if any session title contains one of the MPV warning titles
+    for (const session of sessions) {
+      for (const mpvTitle of MPV_WARNING_TITLES) {
+        if (session.title && session.title.includes(mpvTitle)) {
+          return {
+            hasMpvRisk: true,
+            matchedTitle: mpvTitle,
+            session: session
+          };
+        }
+      }
+    }
+    return { hasMpvRisk: false };
+  }
+
   function showAssociateTimeDetails(data) {
     const infoDiv = document.getElementById('fc-lt-associate-info');
     const nameDiv = document.getElementById('fc-lt-associate-name');
@@ -525,6 +567,9 @@
 
     infoDiv.classList.remove('hidden', 'not-found');
 
+    // Check for MPV risk
+    const mpvCheck = checkForMpvRisk(data.sessions);
+
     // Find current activity
     const currentActivity = data.currentActivity;
     const isClockedIn = data.isClockedIn;
@@ -532,7 +577,17 @@
     // Display employee ID and status
     nameDiv.textContent = `Badge: ${data.employeeId}`;
 
-    if (currentActivity) {
+    if (mpvCheck.hasMpvRisk) {
+      // Show MPV warning
+      infoDiv.classList.add('mpv-warning');
+      detailsDiv.innerHTML = `
+        <div class="mpv-alert">⚠️ MPV RISK - Avoid Multiple Path Violation!</div>
+        <strong>${mpvCheck.matchedTitle}</strong> found in history<br>
+        ${currentActivity ? `Current: ${currentActivity.title}` : ''}
+      `;
+      showPanelMessage('⚠️ MPV Risk - Check time details!', 'error');
+    } else if (currentActivity) {
+      infoDiv.classList.remove('mpv-warning');
       const statusClass = isClockedIn ? 'uph' : 'uph low';
       detailsDiv.innerHTML = `
         <strong>${currentActivity.title}</strong><br>
@@ -540,6 +595,7 @@
         Duration: ${currentActivity.duration || 'ongoing'}
       `;
     } else if (data.sessions.length > 0) {
+      infoDiv.classList.remove('mpv-warning');
       // Show most recent session
       const lastSession = data.sessions[data.sessions.length - 1];
       detailsDiv.innerHTML = `
