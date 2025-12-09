@@ -8,8 +8,15 @@
   // Track connected tabs
   const connectedTabs = {
     kiosk: null,
-    fclm: null
+    fclmTabs: []  // Track multiple FCLM tabs
   };
+
+  // Get the best available FCLM tab
+  function getAvailableFclmTab() {
+    // Filter out closed tabs
+    connectedTabs.fclmTabs = connectedTabs.fclmTabs.filter(tab => tab && tab.tabId);
+    return connectedTabs.fclmTabs[0] || null;
+  }
 
   // Store current work code being assigned (persists across page navigation)
   let currentWorkCode = null;
@@ -27,7 +34,8 @@
     if (message.action === 'getConnectedTabs') {
       sendResponse({
         kiosk: connectedTabs.kiosk,
-        fclm: connectedTabs.fclm
+        fclm: getAvailableFclmTab(),
+        fclmTabCount: connectedTabs.fclmTabs.length
       });
       return false;
     }
@@ -56,13 +64,18 @@
 
     // Fetch employee time details via FCLM tab
     if (message.action === 'fetchEmployeeTimeDetails') {
-      if (connectedTabs.fclm) {
-        browser.tabs.sendMessage(connectedTabs.fclm.tabId, {
+      const fclmTab = getAvailableFclmTab();
+      if (fclmTab) {
+        browser.tabs.sendMessage(fclmTab.tabId, {
           action: 'fetchEmployeeTimeDetails',
           employeeId: message.employeeId
         })
           .then(response => sendResponse(response))
-          .catch(error => sendResponse({ success: false, error: error.message }));
+          .catch(error => {
+            // Remove this tab from the list and try again
+            connectedTabs.fclmTabs = connectedTabs.fclmTabs.filter(t => t.tabId !== fclmTab.tabId);
+            sendResponse({ success: false, error: error.message });
+          });
         return true; // Async response
       } else {
         sendResponse({ success: false, error: 'FCLM tab not connected. Please open fclm-portal.amazon.com' });
@@ -72,19 +85,21 @@
 
     // Check if FCLM is connected
     if (message.action === 'checkFclmConnection') {
-      if (connectedTabs.fclm) {
+      const fclmTab = getAvailableFclmTab();
+      if (fclmTab) {
         // Ping FCLM to make sure it's still responsive
-        browser.tabs.sendMessage(connectedTabs.fclm.tabId, { action: 'ping' })
+        browser.tabs.sendMessage(fclmTab.tabId, { action: 'ping' })
           .then(response => {
-            sendResponse({ connected: true, ready: response.ready });
+            sendResponse({ connected: true, ready: response.ready, tabCount: connectedTabs.fclmTabs.length });
           })
           .catch(() => {
-            connectedTabs.fclm = null;
-            sendResponse({ connected: false });
+            // Remove unresponsive tab
+            connectedTabs.fclmTabs = connectedTabs.fclmTabs.filter(t => t.tabId !== fclmTab.tabId);
+            sendResponse({ connected: getAvailableFclmTab() !== null, tabCount: connectedTabs.fclmTabs.length });
           });
         return true;
       } else {
-        sendResponse({ connected: false });
+        sendResponse({ connected: false, tabCount: 0 });
         return false;
       }
     }
@@ -103,8 +118,9 @@
     }
 
     if (message.action === 'forwardToFclm') {
-      if (connectedTabs.fclm) {
-        browser.tabs.sendMessage(connectedTabs.fclm.tabId, message.payload)
+      const fclmTab = getAvailableFclmTab();
+      if (fclmTab) {
+        browser.tabs.sendMessage(fclmTab.tabId, message.payload)
           .then(response => sendResponse(response))
           .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
@@ -128,12 +144,20 @@
       };
       console.log('[FC Labor Tracking] Kiosk tab registered:', connectedTabs.kiosk);
     } else if (message.pageType === 'fclm') {
-      connectedTabs.fclm = {
+      // Add to FCLM tabs array if not already present
+      const existingIdx = connectedTabs.fclmTabs.findIndex(t => t.tabId === tabId);
+      const fclmTabInfo = {
         tabId,
         url: message.url,
         warehouseId: message.warehouseId
       };
-      console.log('[FC Labor Tracking] FCLM tab registered:', connectedTabs.fclm);
+
+      if (existingIdx >= 0) {
+        connectedTabs.fclmTabs[existingIdx] = fclmTabInfo;
+      } else {
+        connectedTabs.fclmTabs.push(fclmTabInfo);
+      }
+      console.log('[FC Labor Tracking] FCLM tab registered:', fclmTabInfo, `(${connectedTabs.fclmTabs.length} total)`);
 
       // Notify kiosk that FCLM is now connected
       if (connectedTabs.kiosk) {
@@ -154,12 +178,15 @@
       connectedTabs.kiosk = null;
       console.log('[FC Labor Tracking] Kiosk tab closed');
     }
-    if (connectedTabs.fclm?.tabId === tabId) {
-      connectedTabs.fclm = null;
-      console.log('[FC Labor Tracking] FCLM tab closed');
 
-      // Notify kiosk that FCLM is disconnected
-      if (connectedTabs.kiosk) {
+    // Remove from FCLM tabs array
+    const fclmIdx = connectedTabs.fclmTabs.findIndex(t => t.tabId === tabId);
+    if (fclmIdx >= 0) {
+      connectedTabs.fclmTabs.splice(fclmIdx, 1);
+      console.log('[FC Labor Tracking] FCLM tab closed. Remaining:', connectedTabs.fclmTabs.length);
+
+      // Notify kiosk if no more FCLM tabs
+      if (connectedTabs.fclmTabs.length === 0 && connectedTabs.kiosk) {
         browser.tabs.sendMessage(connectedTabs.kiosk.tabId, {
           action: 'fclmDisconnected'
         }).catch(() => {});
@@ -177,17 +204,18 @@
           console.log('[FC Labor Tracking] Kiosk tab navigated away');
         }
       }
-      if (connectedTabs.fclm?.tabId === tabId) {
-        if (!changeInfo.url.includes('fclm-portal.amazon.com')) {
-          connectedTabs.fclm = null;
-          console.log('[FC Labor Tracking] FCLM tab navigated away');
 
-          // Notify kiosk
-          if (connectedTabs.kiosk) {
-            browser.tabs.sendMessage(connectedTabs.kiosk.tabId, {
-              action: 'fclmDisconnected'
-            }).catch(() => {});
-          }
+      // Check FCLM tabs
+      const fclmIdx = connectedTabs.fclmTabs.findIndex(t => t.tabId === tabId);
+      if (fclmIdx >= 0 && !changeInfo.url.includes('fclm-portal.amazon.com')) {
+        connectedTabs.fclmTabs.splice(fclmIdx, 1);
+        console.log('[FC Labor Tracking] FCLM tab navigated away. Remaining:', connectedTabs.fclmTabs.length);
+
+        // Notify kiosk if no more FCLM tabs
+        if (connectedTabs.fclmTabs.length === 0 && connectedTabs.kiosk) {
+          browser.tabs.sendMessage(connectedTabs.kiosk.tabId, {
+            action: 'fclmDisconnected'
+          }).catch(() => {});
         }
       }
       updateBadge();
@@ -196,10 +224,10 @@
 
   function updateBadge() {
     const hasKiosk = connectedTabs.kiosk !== null;
-    const hasFclm = connectedTabs.fclm !== null;
+    const hasFclm = connectedTabs.fclmTabs.length > 0;
 
     if (hasKiosk && hasFclm) {
-      // Both connected
+      // Both connected - show number of FCLM tabs
       browser.browserAction.setBadgeText({ text: '✓' });
       browser.browserAction.setBadgeBackgroundColor({ color: '#2ecc71' });
     } else if (hasKiosk || hasFclm) {
