@@ -262,6 +262,15 @@
         continue;
       }
 
+      // IMPORTANT: For MPV time calculation, only count job-seg rows
+      // function-seg rows show aggregate time that OVERLAPS with job-seg rows
+      // job-seg rows are the actual individual work sessions
+      // Counting both would double-count the time!
+      if (rowClass.includes('function-seg')) {
+        log(`Skipping function-seg row for MPV (overlaps with job-seg): ${title} - ${duration}`);
+        continue;
+      }
+
       // Parse duration - FCLM uses MM:SS format (e.g., "210:35" = 210 mins 35 secs)
       const durationMinutes = parseDurationToMinutes(duration);
 
@@ -271,7 +280,7 @@
         end,
         duration,
         durationMinutes,
-        rowType: rowClass.includes('job-seg') ? 'job' : (rowClass.includes('function-seg') ? 'function' : 'other')
+        rowType: rowClass.includes('job-seg') ? 'job' : 'other'
       };
 
       result.sessions.push(session);
@@ -425,6 +434,13 @@
         continue;
       }
 
+      // IMPORTANT: For MPV time calculation, only count job-seg rows
+      // function-seg rows show aggregate time that OVERLAPS with job-seg rows
+      if (rowClass.includes('function-seg')) {
+        log(`Skipping function-seg row for MPV (overlaps with job-seg): ${title} - ${duration}`);
+        continue;
+      }
+
       const durationMinutes = parseDurationToMinutes(duration);
 
       const session = {
@@ -433,7 +449,7 @@
         end,
         duration,
         durationMinutes,
-        rowType: rowClass.includes('job-seg') ? 'job' : (rowClass.includes('function-seg') ? 'function' : 'other')
+        rowType: rowClass.includes('job-seg') ? 'job' : 'other'
       };
 
       result.sessions.push(session);

@@ -719,6 +719,9 @@
   async function lookupAssociate(badgeId) {
     console.log('[FC Labor Tracking] Looking up associate:', badgeId);
 
+    // Reset previous MPV result for fresh lookup
+    currentMpvCheckResult = null;
+
     try {
       // Show loading state
       showAssociateLoading(badgeId);
@@ -753,11 +756,31 @@
 
         showAssociateTimeDetails(response.data, currentWorkCode);
       } else {
-        showAssociateNotFound(badgeId, response.error);
+        // Check if FCLM might be temporarily unavailable (navigating)
+        const errorMsg = response.error || 'Unknown error';
+        if (errorMsg.includes('not connected') || errorMsg.includes('Could not establish connection')) {
+          console.log('[FC Labor Tracking] FCLM may be navigating, will retry on async result');
+          showAssociateLoading(badgeId);
+          const detailsDiv = document.getElementById('fc-lt-associate-details');
+          if (detailsDiv) {
+            detailsDiv.textContent = 'Waiting for FCLM...';
+          }
+          // Refresh FCLM status after a delay
+          setTimeout(updateFclmStatus, 2000);
+        } else {
+          showAssociateNotFound(badgeId, errorMsg);
+        }
       }
     } catch (error) {
       console.log('[FC Labor Tracking] Lookup error:', error);
-      showAssociateNotFound(badgeId, 'FCLM not connected');
+      // Don't immediately show as disconnected - might be temporary
+      showAssociateLoading(badgeId);
+      const detailsDiv = document.getElementById('fc-lt-associate-details');
+      if (detailsDiv) {
+        detailsDiv.textContent = 'Connecting to FCLM...';
+      }
+      // Refresh FCLM status
+      setTimeout(updateFclmStatus, 1000);
     }
   }
 
@@ -768,7 +791,8 @@
 
     if (!infoDiv) return;
 
-    infoDiv.classList.remove('hidden', 'not-found');
+    // Clear all previous states including MPV warnings
+    infoDiv.classList.remove('hidden', 'not-found', 'mpv-warning', 'mpv-ok');
     nameDiv.textContent = 'Looking up...';
     detailsDiv.textContent = `Badge: ${badgeId}`;
   }
