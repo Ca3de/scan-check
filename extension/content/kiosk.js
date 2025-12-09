@@ -59,6 +59,7 @@
     panel.innerHTML = `
       <div class="fc-lt-header">
         <span class="fc-lt-title">Labor Tracking Assistant</span>
+        <span class="fc-lt-fclm-status" id="fc-lt-fclm-status" title="FCLM Data Status">--</span>
         <button class="fc-lt-minimize" title="Minimize">_</button>
       </div>
       <div class="fc-lt-body">
@@ -70,6 +71,10 @@
         <div class="fc-lt-section hidden" id="fc-lt-badge-section">
           <label>Badge ID</label>
           <input type="text" id="fc-lt-badge" placeholder="Scan or enter badge ID" autocomplete="off">
+          <div class="fc-lt-associate-info hidden" id="fc-lt-associate-info">
+            <div class="fc-lt-associate-name" id="fc-lt-associate-name"></div>
+            <div class="fc-lt-associate-details" id="fc-lt-associate-details"></div>
+          </div>
           <button id="fc-lt-submit-badge" class="fc-lt-btn primary">Submit Badge</button>
           <button id="fc-lt-done" class="fc-lt-btn success">Done</button>
           <button id="fc-lt-back" class="fc-lt-btn secondary">Back</button>
@@ -208,6 +213,94 @@
         border: 1px solid rgba(52, 152, 219, 0.4);
         color: #3498db;
       }
+      .fc-lt-fclm-status {
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: #333;
+        color: #888;
+        margin-left: auto;
+        margin-right: 8px;
+      }
+      .fc-lt-fclm-status.connected {
+        background: rgba(46, 204, 113, 0.2);
+        color: #2ecc71;
+      }
+      .fc-lt-fclm-status.disconnected {
+        background: rgba(231, 76, 60, 0.2);
+        color: #e74c3c;
+      }
+      .fc-lt-associate-info {
+        background: #16213e;
+        border-radius: 4px;
+        padding: 8px;
+        margin: 8px 0;
+      }
+      .fc-lt-associate-info.hidden {
+        display: none;
+      }
+      .fc-lt-associate-name {
+        font-weight: 600;
+        font-size: 14px;
+        color: #fff;
+        margin-bottom: 4px;
+      }
+      .fc-lt-associate-details {
+        font-size: 11px;
+        color: #888;
+      }
+      .fc-lt-associate-details .uph {
+        color: #2ecc71;
+        font-weight: 500;
+      }
+      .fc-lt-associate-details .uph.low {
+        color: #e74c3c;
+      }
+      .fc-lt-associate-info.not-found {
+        background: rgba(231, 76, 60, 0.2);
+        border: 1px solid rgba(231, 76, 60, 0.3);
+      }
+      .fc-lt-associate-info.not-found .fc-lt-associate-name {
+        color: #e74c3c;
+      }
+      .fc-lt-associate-info.mpv-warning {
+        background: rgba(231, 76, 60, 0.3);
+        border: 2px solid #e74c3c;
+        animation: mpv-pulse 1s ease-in-out infinite;
+      }
+      @keyframes mpv-pulse {
+        0%, 100% { box-shadow: 0 0 5px rgba(231, 76, 60, 0.5); }
+        50% { box-shadow: 0 0 15px rgba(231, 76, 60, 0.8); }
+      }
+      .mpv-alert {
+        background: #e74c3c;
+        color: #fff;
+        padding: 6px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 12px;
+        margin-bottom: 6px;
+        text-align: center;
+      }
+      .mpv-details {
+        font-size: 11px;
+        color: #ff6b6b;
+        margin-top: 4px;
+      }
+      .fc-lt-associate-info.mpv-ok {
+        background: rgba(46, 204, 113, 0.2);
+        border: 2px solid #2ecc71;
+      }
+      .mpv-ok-alert {
+        background: #2ecc71;
+        color: #fff;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 11px;
+        margin-bottom: 6px;
+        text-align: center;
+      }
     `;
 
     document.head.appendChild(styles);
@@ -249,6 +342,16 @@
     workCodeInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') submitWorkCode();
     });
+
+    // Badge input - lookup on change
+    badgeInput.addEventListener('input', debounce(async () => {
+      const badgeId = badgeInput.value.trim();
+      if (badgeId.length >= 3) {
+        await lookupAssociate(badgeId);
+      } else {
+        hideAssociateInfo();
+      }
+    }, 300));
 
     // Badge submission
     submitBadgeBtn.addEventListener('click', () => submitBadge());
@@ -301,6 +404,14 @@
 
     try {
       showPanelMessage('Submitting work code...', 'info');
+
+      // Store work code in background script for MPV check on badge page
+      await browser.runtime.sendMessage({
+        action: 'setCurrentWorkCode',
+        workCode: workCode
+      });
+      console.log('[FC Labor Tracking] Work code stored for MPV check:', workCode);
+
       await handleWorkCodeInput(workCode);
       showPanelMessage('Work code submitted!', 'success');
 
@@ -333,6 +444,7 @@
       await handleBadgeIdInput(badgeId);
       showPanelMessage('Badge added!', 'success');
       input.value = '';
+      hideAssociateInfo();
 
       // Ready for next badge
       setTimeout(() => {
@@ -400,6 +512,356 @@
     msg.textContent = text;
     msg.className = 'fc-lt-message ' + type;
   }
+
+  // ============== FCLM INTEGRATION ==============
+
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+
+  async function lookupAssociate(badgeId) {
+    console.log('[FC Labor Tracking] Looking up associate:', badgeId);
+
+    try {
+      // Show loading state
+      showAssociateLoading(badgeId);
+
+      // Get the current work code from background script
+      const workCodeResponse = await browser.runtime.sendMessage({
+        action: 'getCurrentWorkCode'
+      });
+      const currentWorkCode = workCodeResponse?.workCode || null;
+      console.log('[FC Labor Tracking] Current work code for MPV check:', currentWorkCode);
+
+      const response = await browser.runtime.sendMessage({
+        action: 'fetchEmployeeTimeDetails',
+        employeeId: badgeId
+      });
+
+      if (response.success && response.data) {
+        showAssociateTimeDetails(response.data, currentWorkCode);
+      } else {
+        showAssociateNotFound(badgeId, response.error);
+      }
+    } catch (error) {
+      console.log('[FC Labor Tracking] Lookup error:', error);
+      showAssociateNotFound(badgeId, 'FCLM not connected');
+    }
+  }
+
+  function showAssociateLoading(badgeId) {
+    const infoDiv = document.getElementById('fc-lt-associate-info');
+    const nameDiv = document.getElementById('fc-lt-associate-name');
+    const detailsDiv = document.getElementById('fc-lt-associate-details');
+
+    if (!infoDiv) return;
+
+    infoDiv.classList.remove('hidden', 'not-found');
+    nameDiv.textContent = 'Looking up...';
+    detailsDiv.textContent = `Badge: ${badgeId}`;
+  }
+
+  // MPV (Multiple Path Violation) Configuration
+  // These are the restricted paths that can cause MPV
+  const MPV_RESTRICTED_PATHS = {
+    'C-Returns_StowSweep': ['STOWSWEEP', 'SWEEP', 'CRESW', 'STOW_SWEEP', 'STOWSW'],
+    'C-Returns_EndofLine': ['CREOL', 'EOL', 'ENDOFLINE', 'END_OF_LINE'],
+    'Vreturns WaterSpider': ['VRWS', 'WATERSPIDER', 'WS', 'WATER_SPIDER', 'VRETWS']
+  };
+
+  // Max time allowed on a restricted path (4 hours 30 minutes in minutes)
+  const MPV_MAX_TIME_MINUTES = 270;
+
+  // Get which restricted path a work code belongs to (if any)
+  function getRestrictedPathForWorkCode(workCode) {
+    if (!workCode) return null;
+    const upperCode = workCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+    for (const [pathTitle, codes] of Object.entries(MPV_RESTRICTED_PATHS)) {
+      for (const code of codes) {
+        if (upperCode.includes(code) || code.includes(upperCode)) {
+          return pathTitle;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Get which restricted path a session title belongs to (if any)
+  function getRestrictedPathForTitle(title) {
+    if (!title) return null;
+
+    for (const pathTitle of Object.keys(MPV_RESTRICTED_PATHS)) {
+      if (title.includes(pathTitle)) {
+        return pathTitle;
+      }
+    }
+    return null;
+  }
+
+  // Parse duration string (e.g., "2h 30m", "45m", "1:30:00") to minutes
+  function parseDurationToMinutes(duration) {
+    if (!duration) return 0;
+
+    // Try "Xh Ym" format
+    const hMatch = duration.match(/(\d+)\s*h/i);
+    const mMatch = duration.match(/(\d+)\s*m/i);
+    if (hMatch || mMatch) {
+      const hours = hMatch ? parseInt(hMatch[1]) : 0;
+      const mins = mMatch ? parseInt(mMatch[1]) : 0;
+      return hours * 60 + mins;
+    }
+
+    // Try "H:MM:SS" or "H:MM" format
+    const timeMatch = duration.match(/(\d+):(\d+)(?::(\d+))?/);
+    if (timeMatch) {
+      const hours = parseInt(timeMatch[1]);
+      const mins = parseInt(timeMatch[2]);
+      return hours * 60 + mins;
+    }
+
+    return 0;
+  }
+
+  // Calculate total time per restricted path from sessions
+  function calculateRestrictedPathTimes(sessions) {
+    const pathTimes = {};
+
+    for (const session of sessions) {
+      const restrictedPath = getRestrictedPathForTitle(session.title);
+      if (restrictedPath) {
+        const mins = parseDurationToMinutes(session.duration);
+        pathTimes[restrictedPath] = (pathTimes[restrictedPath] || 0) + mins;
+      }
+    }
+
+    return pathTimes;
+  }
+
+  // Check for MPV risk based on current work code and AA history
+  function checkForMpvRisk(sessions, currentWorkCode) {
+    const result = {
+      hasMpvRisk: false,
+      reason: null,
+      details: null,
+      workedPaths: [],
+      targetPath: null,
+      pathTimes: {}
+    };
+
+    // Get the restricted path for the work code being assigned
+    const targetPath = getRestrictedPathForWorkCode(currentWorkCode);
+    result.targetPath = targetPath;
+
+    // Calculate time spent on each restricted path
+    const pathTimes = calculateRestrictedPathTimes(sessions);
+    result.pathTimes = pathTimes;
+
+    // Find which restricted paths the AA has worked
+    const workedPaths = Object.keys(pathTimes);
+    result.workedPaths = workedPaths;
+
+    // If target is not a restricted path, no MPV risk
+    if (!targetPath) {
+      return result;
+    }
+
+    // Rule 1: Check if AA has worked a DIFFERENT restricted path
+    for (const workedPath of workedPaths) {
+      if (workedPath !== targetPath) {
+        result.hasMpvRisk = true;
+        result.reason = 'PATH_SWITCH';
+        result.details = `Already worked ${workedPath} (${formatMinutes(pathTimes[workedPath])}). Cannot switch to ${targetPath}.`;
+        return result;
+      }
+    }
+
+    // Rule 2: Check if AA has exceeded 4:30 on the target restricted path
+    const targetTime = pathTimes[targetPath] || 0;
+    if (targetTime >= MPV_MAX_TIME_MINUTES) {
+      result.hasMpvRisk = true;
+      result.reason = 'TIME_EXCEEDED';
+      result.details = `Already ${formatMinutes(targetTime)} on ${targetPath}. Max allowed is ${formatMinutes(MPV_MAX_TIME_MINUTES)}.`;
+      return result;
+    }
+
+    // If same path and under time limit, show remaining time as info
+    if (targetTime > 0) {
+      const remaining = MPV_MAX_TIME_MINUTES - targetTime;
+      result.remainingTime = remaining;
+      result.currentTime = targetTime;
+    }
+
+    return result;
+  }
+
+  // Format minutes as "Xh Ym"
+  function formatMinutes(mins) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h > 0 && m > 0) return `${h}h ${m}m`;
+    if (h > 0) return `${h}h`;
+    return `${m}m`;
+  }
+
+  function showAssociateTimeDetails(data, currentWorkCode) {
+    const infoDiv = document.getElementById('fc-lt-associate-info');
+    const nameDiv = document.getElementById('fc-lt-associate-name');
+    const detailsDiv = document.getElementById('fc-lt-associate-details');
+
+    if (!infoDiv) return;
+
+    infoDiv.classList.remove('hidden', 'not-found', 'mpv-warning', 'mpv-ok');
+
+    // Check for MPV risk based on current work code
+    const mpvCheck = checkForMpvRisk(data.sessions, currentWorkCode);
+
+    // Find current activity
+    const currentActivity = data.currentActivity;
+    const isClockedIn = data.isClockedIn;
+
+    // Display employee ID and status
+    nameDiv.textContent = `Badge: ${data.employeeId}`;
+
+    if (mpvCheck.hasMpvRisk) {
+      // Show MPV warning - BLOCK this assignment
+      infoDiv.classList.add('mpv-warning');
+
+      let alertText = '⚠️ MPV RISK - DO NOT ASSIGN!';
+      if (mpvCheck.reason === 'PATH_SWITCH') {
+        alertText = '🚫 MPV - PATH SWITCH BLOCKED!';
+      } else if (mpvCheck.reason === 'TIME_EXCEEDED') {
+        alertText = '🚫 MPV - TIME LIMIT EXCEEDED!';
+      }
+
+      detailsDiv.innerHTML = `
+        <div class="mpv-alert">${alertText}</div>
+        <div class="mpv-details">${mpvCheck.details}</div>
+        ${currentActivity ? `<br>Current: ${currentActivity.title}` : ''}
+      `;
+      showPanelMessage('🚫 MPV Risk - Cannot assign!', 'error');
+
+    } else if (mpvCheck.targetPath && mpvCheck.remainingTime) {
+      // Same restricted path, under limit - show remaining time
+      infoDiv.classList.add('mpv-ok');
+      detailsDiv.innerHTML = `
+        <div class="mpv-ok-alert">✓ OK - Same path, time remaining</div>
+        <strong>${mpvCheck.targetPath}</strong><br>
+        Used: ${formatMinutes(mpvCheck.currentTime)} | Remaining: ${formatMinutes(mpvCheck.remainingTime)}
+        ${currentActivity ? `<br>Current: ${currentActivity.title}` : ''}
+      `;
+      showPanelMessage(`✓ OK - ${formatMinutes(mpvCheck.remainingTime)} remaining`, 'success');
+
+    } else if (mpvCheck.targetPath && mpvCheck.workedPaths.length === 0) {
+      // First time on restricted path
+      infoDiv.classList.add('mpv-ok');
+      detailsDiv.innerHTML = `
+        <div class="mpv-ok-alert">✓ OK - First time on this path</div>
+        <strong>${mpvCheck.targetPath}</strong><br>
+        Max allowed: ${formatMinutes(MPV_MAX_TIME_MINUTES)}
+        ${currentActivity ? `<br>Current: ${currentActivity.title}` : ''}
+      `;
+      showPanelMessage('✓ First time on restricted path', 'success');
+
+    } else if (currentActivity) {
+      // Non-restricted path with current activity
+      const statusClass = isClockedIn ? 'uph' : 'uph low';
+      detailsDiv.innerHTML = `
+        <strong>${currentActivity.title}</strong><br>
+        <span class="${statusClass}">${isClockedIn ? 'Active' : 'Inactive'}</span> |
+        Duration: ${currentActivity.duration || 'ongoing'}
+      `;
+      showPanelMessage('✓ Ready to assign', 'success');
+
+    } else if (data.sessions.length > 0) {
+      // Non-restricted path, show last session
+      const lastSession = data.sessions[data.sessions.length - 1];
+      detailsDiv.innerHTML = `
+        Last: <strong>${lastSession.title}</strong><br>
+        ${data.hoursOnTask ? `Hours: ${data.hoursOnTask.toFixed(1)}h` : `Sessions: ${data.sessions.length}`}
+      `;
+      showPanelMessage('✓ Ready to assign', 'info');
+
+    } else {
+      detailsDiv.textContent = 'No time details found for today';
+      showPanelMessage('✓ Ready to assign (no history)', 'info');
+    }
+  }
+
+  function showAssociateNotFound(badgeId, reason) {
+    const infoDiv = document.getElementById('fc-lt-associate-info');
+    const nameDiv = document.getElementById('fc-lt-associate-name');
+    const detailsDiv = document.getElementById('fc-lt-associate-details');
+
+    if (!infoDiv) return;
+
+    infoDiv.classList.remove('hidden');
+    infoDiv.classList.add('not-found');
+
+    nameDiv.textContent = 'Lookup failed';
+    detailsDiv.textContent = reason || `Badge: ${badgeId} - Not found in FCLM`;
+  }
+
+  function hideAssociateInfo() {
+    const infoDiv = document.getElementById('fc-lt-associate-info');
+    if (infoDiv) {
+      infoDiv.classList.add('hidden');
+      infoDiv.classList.remove('not-found');
+    }
+  }
+
+  async function updateFclmStatus() {
+    const statusEl = document.getElementById('fc-lt-fclm-status');
+    if (!statusEl) return;
+
+    try {
+      const response = await browser.runtime.sendMessage({
+        action: 'checkFclmConnection'
+      });
+
+      if (response.connected) {
+        statusEl.textContent = 'FCLM Ready';
+        statusEl.className = 'fc-lt-fclm-status connected';
+        statusEl.title = 'FCLM connected - will lookup employee on badge scan';
+      } else {
+        statusEl.textContent = 'FCLM Offline';
+        statusEl.className = 'fc-lt-fclm-status disconnected';
+        statusEl.title = 'Open fclm-portal.amazon.com to enable lookups';
+      }
+    } catch (error) {
+      statusEl.textContent = '--';
+      statusEl.className = 'fc-lt-fclm-status';
+      statusEl.title = 'FCLM: Unable to check status';
+    }
+  }
+
+  // Listen for FCLM connection status changes
+  browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'fclmConnected') {
+      console.log('[FC Labor Tracking] FCLM connected');
+      updateFclmStatus();
+      showPanelMessage('FCLM connected!', 'success');
+    }
+    if (message.action === 'fclmDisconnected') {
+      console.log('[FC Labor Tracking] FCLM disconnected');
+      updateFclmStatus();
+      showPanelMessage('FCLM disconnected', 'error');
+    }
+  });
+
+  // Initial FCLM status check
+  setTimeout(updateFclmStatus, 1000);
+
+  // Periodic status update
+  setInterval(updateFclmStatus, 30000);
 
   async function handleWorkCodeInput(workCode) {
     console.log('[FC Labor Tracking] Attempting to input work code:', workCode);
