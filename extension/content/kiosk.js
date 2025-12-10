@@ -1313,6 +1313,12 @@
       const normalizedBadge = badgeId.toString().trim().replace(/^0+/, '');
       console.log('[FC Labor Tracking] Normalized badge for search:', normalizedBadge);
 
+      // Debug: Log all cached badge IDs
+      console.log('[FC Labor Tracking] Cached path data:');
+      for (const [pathName, aas] of Object.entries(data.pathAAs)) {
+        console.log(`  ${pathName}: ${aas.map(a => `${a.name}(${a.badgeId})`).join(', ')}`);
+      }
+
       // Search for badge in cached path data
       let foundPath = null;
       let foundHours = 0;
