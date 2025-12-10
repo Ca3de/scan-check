@@ -1242,7 +1242,9 @@
 
         const name = document.createElement('span');
         name.className = 'fc-lt-path-aa-name';
-        name.textContent = aa.name || aa.badgeId;
+        // Show name with badge ID for debugging
+        name.textContent = aa.name ? `${aa.name}` : aa.badgeId;
+        name.title = `Badge: ${aa.badgeId}`; // Tooltip shows badge ID
 
         const time = document.createElement('span');
         time.className = 'fc-lt-path-aa-time';
@@ -1307,16 +1309,26 @@
         return null;
       }
 
+      // Normalize badge ID for comparison (remove leading zeros, trim whitespace)
+      const normalizedBadge = badgeId.toString().trim().replace(/^0+/, '');
+      console.log('[FC Labor Tracking] Normalized badge for search:', normalizedBadge);
+
       // Search for badge in cached path data
       let foundPath = null;
       let foundHours = 0;
+      let foundName = '';
 
       for (const [pathName, aas] of Object.entries(data.pathAAs)) {
-        const aa = aas.find(a => a.badgeId === badgeId);
+        const aa = aas.find(a => {
+          // Normalize cached badge ID too
+          const cachedBadge = (a.badgeId || '').toString().trim().replace(/^0+/, '');
+          return cachedBadge === normalizedBadge;
+        });
         if (aa) {
           foundPath = pathName;
           foundHours = aa.hours || (aa.minutes / 60) || 0;
-          console.log('[FC Labor Tracking] Found badge in cache:', pathName, foundHours + 'h');
+          foundName = aa.name || '';
+          console.log('[FC Labor Tracking] Found badge in cache:', pathName, foundHours + 'h', 'Name:', foundName);
           break;
         }
       }
@@ -1329,7 +1341,8 @@
         workedPaths: foundPath ? [foundPath] : [],
         targetPath: targetPath,
         pathTimes: {},
-        fromCache: true
+        fromCache: true,
+        employeeName: foundName
       };
 
       if (foundPath) {
@@ -1339,7 +1352,7 @@
         if (foundPath !== targetPath) {
           result.hasMpvRisk = true;
           result.reason = 'PATH_SWITCH';
-          result.details = `Already worked ${foundPath} (${foundHours.toFixed(2)}h). Cannot switch to ${targetPath}.`;
+          result.details = `${foundName || 'AA'} already worked ${foundPath} (${foundHours.toFixed(2)}h). Cannot switch to ${targetPath}.`;
           console.log('[FC Labor Tracking] QUICK MPV BLOCK - Path switch detected!');
           return result;
         }
@@ -1349,7 +1362,7 @@
         if (totalMinutes >= MPV_MAX_TIME_MINUTES) {
           result.hasMpvRisk = true;
           result.reason = 'TIME_EXCEEDED';
-          result.details = `Already ${foundHours.toFixed(2)}h on ${targetPath}. Max allowed is ${formatMinutes(MPV_MAX_TIME_MINUTES)}.`;
+          result.details = `${foundName || 'AA'} already ${foundHours.toFixed(2)}h on ${targetPath}. Max allowed is ${formatMinutes(MPV_MAX_TIME_MINUTES)}.`;
           console.log('[FC Labor Tracking] QUICK MPV BLOCK - Time exceeded!');
           return result;
         }
