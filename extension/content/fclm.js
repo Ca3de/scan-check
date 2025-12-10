@@ -536,7 +536,142 @@
       sendResponse({ success: true, ready: true });
       return false;
     }
+
+    if (message.action === 'fetchPathAAs') {
+      fetchPathAAs(message.paths)
+        .then(data => {
+          sendResponse({ success: true, data });
+        })
+        .catch(error => {
+          sendResponse({ success: false, error: error.message });
+        });
+      return true; // Async response
+    }
   });
+
+  // ============== FETCH AAs ON RESTRICTED PATHS ==============
+
+  async function fetchPathAAs(paths) {
+    log(`Fetching AAs on paths: ${paths.join(', ')}`);
+
+    // Build URL for process path rollup
+    const shiftRange = getShiftDateRange();
+    const params = new URLSearchParams({
+      warehouseId: CONFIG.WAREHOUSE_ID,
+      startDateDay: shiftRange.endDate,
+      maxIntradayDays: '1',
+      spanType: 'Intraday',
+      startDateIntraday: shiftRange.startDate,
+      startHourIntraday: String(shiftRange.startHour),
+      startMinuteIntraday: '0',
+      endDateIntraday: shiftRange.endDate,
+      endHourIntraday: String(shiftRange.endHour),
+      endMinuteIntraday: '0'
+    });
+
+    const rollupUrl = `https://fclm-portal.amazon.com/reports/processPathRollup?${params.toString()}`;
+
+    try {
+      // Fetch the page content
+      const response = await fetch(rollupUrl, { credentials: 'include' });
+      const html = await response.text();
+
+      // Parse the HTML
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+
+      const result = {};
+      for (const path of paths) {
+        result[path] = [];
+      }
+
+      // Find the table with process path data
+      // Look for tables that contain our path names
+      const tables = doc.querySelectorAll('table');
+
+      for (const table of tables) {
+        const rows = table.querySelectorAll('tr');
+
+        for (const row of rows) {
+          const cells = row.querySelectorAll('td');
+          if (cells.length < 3) continue;
+
+          // Look for path name in the row
+          const rowText = row.textContent;
+
+          for (const path of paths) {
+            if (rowText.includes(path)) {
+              // Try to extract AA information
+              // The structure varies, but typically has: Path Name | Employee | Time
+              const links = row.querySelectorAll('a');
+
+              for (const link of links) {
+                const href = link.getAttribute('href') || '';
+                if (href.includes('employeeId=')) {
+                  const badgeMatch = href.match(/employeeId=(\d+)/);
+                  if (badgeMatch) {
+                    const badgeId = badgeMatch[1];
+                    const name = link.textContent.trim();
+
+                    // Try to find time in nearby cells
+                    let minutes = 0;
+                    for (const cell of cells) {
+                      const cellText = cell.textContent.trim();
+                      // Look for time format like "2:30" or "150:00"
+                      const timeMatch = cellText.match(/^(\d+):(\d+)$/);
+                      if (timeMatch) {
+                        minutes = parseInt(timeMatch[1]) + parseInt(timeMatch[2]) / 60;
+                      }
+                    }
+
+                    // Add to results if not already there
+                    if (!result[path].find(aa => aa.badgeId === badgeId)) {
+                      result[path].push({
+                        badgeId,
+                        name,
+                        minutes
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Also try to find data in a different table structure
+      // Look for expandable sections with path names
+      const pathSections = doc.querySelectorAll('.expandable-row, [data-path], .path-row');
+      for (const section of pathSections) {
+        const sectionText = section.textContent;
+        for (const path of paths) {
+          if (sectionText.includes(path)) {
+            // Found a section for this path - try to extract AAs
+            const employeeLinks = section.querySelectorAll('a[href*="employeeId"]');
+            for (const link of employeeLinks) {
+              const href = link.getAttribute('href') || '';
+              const badgeMatch = href.match(/employeeId=(\d+)/);
+              if (badgeMatch) {
+                const badgeId = badgeMatch[1];
+                const name = link.textContent.trim();
+                if (!result[path].find(aa => aa.badgeId === badgeId)) {
+                  result[path].push({ badgeId, name, minutes: 0 });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      log(`Found AAs: ${JSON.stringify(result)}`, 'success');
+      return result;
+
+    } catch (error) {
+      log(`Error fetching path AAs: ${error.message}`, 'error');
+      throw error;
+    }
+  }
 
   // ============== UI INDICATOR ==============
 

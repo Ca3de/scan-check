@@ -197,6 +197,16 @@
           <button id="fc-lt-done" class="fc-lt-btn success">Done</button>
           <button id="fc-lt-back" class="fc-lt-btn secondary">Back</button>
         </div>
+        <div class="fc-lt-section" id="fc-lt-path-tracking">
+          <div class="fc-lt-path-header">
+            <label>Restricted Path AAs</label>
+            <button id="fc-lt-refresh-paths" class="fc-lt-refresh-btn" title="Refresh">↻</button>
+          </div>
+          <div class="fc-lt-path-updated" id="fc-lt-path-updated">Not loaded</div>
+          <div class="fc-lt-path-list" id="fc-lt-path-list">
+            <div class="fc-lt-path-empty">Click ↻ to load AAs on STWSWP, VRWS, CREOL</div>
+          </div>
+        </div>
         <div class="fc-lt-message hidden" id="fc-lt-message"></div>
       </div>
     `;
@@ -292,6 +302,9 @@
         padding: 8px 10px;
         cursor: pointer;
         font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .fc-lt-suggestion:hover {
         background: #16213e;
@@ -469,6 +482,85 @@
         margin-bottom: 6px;
         text-align: center;
       }
+      .fc-lt-path-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+      }
+      .fc-lt-path-header label {
+        margin-bottom: 0;
+      }
+      .fc-lt-refresh-btn {
+        background: #333;
+        border: none;
+        color: #888;
+        font-size: 14px;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 3px;
+      }
+      .fc-lt-refresh-btn:hover {
+        background: #444;
+        color: #fff;
+      }
+      .fc-lt-refresh-btn.loading {
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .fc-lt-path-updated {
+        font-size: 10px;
+        color: #666;
+        margin-bottom: 6px;
+      }
+      .fc-lt-path-list {
+        background: #0f0f1a;
+        border-radius: 4px;
+        max-height: 150px;
+        overflow-y: auto;
+      }
+      .fc-lt-path-empty {
+        padding: 10px;
+        text-align: center;
+        color: #666;
+        font-size: 11px;
+      }
+      .fc-lt-path-group {
+        border-bottom: 1px solid #222;
+      }
+      .fc-lt-path-group:last-child {
+        border-bottom: none;
+      }
+      .fc-lt-path-name {
+        background: #16213e;
+        padding: 6px 10px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #ff9900;
+      }
+      .fc-lt-path-aa {
+        padding: 4px 10px;
+        font-size: 11px;
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px solid #1a1a2e;
+      }
+      .fc-lt-path-aa:last-child {
+        border-bottom: none;
+      }
+      .fc-lt-path-aa-name {
+        color: #ccc;
+      }
+      .fc-lt-path-aa-time {
+        color: #888;
+      }
+      .fc-lt-path-aa-time.warning {
+        color: #e74c3c;
+        font-weight: 600;
+      }
     `;
 
     document.head.appendChild(styles);
@@ -580,6 +672,15 @@
 
     // Back button - triggers the page's back functionality
     backBtn.addEventListener('click', () => triggerBack());
+
+    // Refresh path AAs button
+    const refreshPathsBtn = document.getElementById('fc-lt-refresh-paths');
+    if (refreshPathsBtn) {
+      refreshPathsBtn.addEventListener('click', () => refreshPathAAs());
+    }
+
+    // Load cached path data on init
+    loadCachedPathAAs();
   }
 
   function makeDraggable(panel) {
@@ -874,6 +975,162 @@
     const msg = document.getElementById('fc-lt-message');
     msg.textContent = text;
     msg.className = 'fc-lt-message ' + type;
+  }
+
+  // ============== PATH AA TRACKING ==============
+
+  const RESTRICTED_PATHS = ['C-Returns_StowSweep', 'Vreturns WaterSpider', 'C-Returns_EndofLine'];
+  const PATH_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
+  let pathRefreshTimer = null;
+
+  async function refreshPathAAs() {
+    const refreshBtn = document.getElementById('fc-lt-refresh-paths');
+    const pathList = document.getElementById('fc-lt-path-list');
+    const updatedDiv = document.getElementById('fc-lt-path-updated');
+
+    if (refreshBtn) {
+      refreshBtn.classList.add('loading');
+    }
+
+    try {
+      console.log('[FC Labor Tracking] Fetching path AAs from FCLM...');
+
+      const response = await browser.runtime.sendMessage({
+        action: 'fetchPathAAs',
+        paths: RESTRICTED_PATHS
+      });
+
+      if (response.success && response.data) {
+        displayPathAAs(response.data);
+
+        // Cache the data
+        await browser.storage.local.set({
+          pathAAs: response.data,
+          pathAAsUpdated: Date.now()
+        });
+
+        if (updatedDiv) {
+          updatedDiv.textContent = 'Updated: ' + new Date().toLocaleTimeString();
+        }
+      } else {
+        if (pathList) {
+          pathList.textContent = '';
+          const empty = document.createElement('div');
+          empty.className = 'fc-lt-path-empty';
+          empty.textContent = response.error || 'Failed to load. Is FCLM open?';
+          pathList.appendChild(empty);
+        }
+      }
+    } catch (e) {
+      console.log('[FC Labor Tracking] Error fetching path AAs:', e);
+      if (pathList) {
+        pathList.textContent = '';
+        const empty = document.createElement('div');
+        empty.className = 'fc-lt-path-empty';
+        empty.textContent = 'Error: ' + e.message;
+        pathList.appendChild(empty);
+      }
+    } finally {
+      if (refreshBtn) {
+        refreshBtn.classList.remove('loading');
+      }
+    }
+  }
+
+  async function loadCachedPathAAs() {
+    try {
+      const data = await browser.storage.local.get(['pathAAs', 'pathAAsUpdated']);
+      if (data.pathAAs && data.pathAAsUpdated) {
+        displayPathAAs(data.pathAAs);
+
+        const updatedDiv = document.getElementById('fc-lt-path-updated');
+        if (updatedDiv) {
+          const ago = Math.round((Date.now() - data.pathAAsUpdated) / 60000);
+          if (ago < 1) {
+            updatedDiv.textContent = 'Updated: just now';
+          } else if (ago < 60) {
+            updatedDiv.textContent = `Updated: ${ago}m ago`;
+          } else {
+            updatedDiv.textContent = 'Updated: ' + new Date(data.pathAAsUpdated).toLocaleTimeString();
+          }
+        }
+
+        // Auto-refresh if data is older than 15 minutes
+        if (Date.now() - data.pathAAsUpdated > PATH_REFRESH_INTERVAL) {
+          setTimeout(refreshPathAAs, 2000); // Slight delay to not overwhelm on load
+        }
+      }
+    } catch (e) {
+      console.log('[FC Labor Tracking] Could not load cached path AAs:', e);
+    }
+  }
+
+  function displayPathAAs(data) {
+    const pathList = document.getElementById('fc-lt-path-list');
+    if (!pathList) return;
+
+    pathList.textContent = '';
+
+    let hasAnyAAs = false;
+
+    for (const pathName of RESTRICTED_PATHS) {
+      const pathData = data[pathName];
+      if (!pathData || pathData.length === 0) continue;
+
+      hasAnyAAs = true;
+
+      const group = document.createElement('div');
+      group.className = 'fc-lt-path-group';
+
+      const header = document.createElement('div');
+      header.className = 'fc-lt-path-name';
+      // Shorten path names for display
+      let shortName = pathName;
+      if (pathName.includes('StowSweep')) shortName = 'STWSWP';
+      else if (pathName.includes('WaterSpider')) shortName = 'VRWS';
+      else if (pathName.includes('EndofLine')) shortName = 'CREOL';
+      header.textContent = `${shortName} (${pathData.length})`;
+      group.appendChild(header);
+
+      for (const aa of pathData) {
+        const row = document.createElement('div');
+        row.className = 'fc-lt-path-aa';
+
+        const name = document.createElement('span');
+        name.className = 'fc-lt-path-aa-name';
+        name.textContent = aa.name || aa.badgeId;
+
+        const time = document.createElement('span');
+        time.className = 'fc-lt-path-aa-time';
+        if (aa.minutes >= 240) { // 4 hours = warning
+          time.classList.add('warning');
+        }
+        time.textContent = formatMinutes(aa.minutes);
+
+        row.appendChild(name);
+        row.appendChild(time);
+        group.appendChild(row);
+      }
+
+      pathList.appendChild(group);
+    }
+
+    if (!hasAnyAAs) {
+      const empty = document.createElement('div');
+      empty.className = 'fc-lt-path-empty';
+      empty.textContent = 'No AAs on restricted paths';
+      pathList.appendChild(empty);
+    }
+  }
+
+  function formatMinutes(minutes) {
+    if (!minutes && minutes !== 0) return '--';
+    const hours = Math.floor(minutes / 60);
+    const mins = Math.round(minutes % 60);
+    if (hours > 0) {
+      return `${hours}h ${mins}m`;
+    }
+    return `${mins}m`;
   }
 
   // ============== FCLM INTEGRATION ==============
