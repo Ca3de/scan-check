@@ -34,6 +34,9 @@
   // Recent work codes for suggestions
   let recentWorkCodes = [];
 
+  // Path refresh timer for auto-refresh every 15 minutes
+  let pathRefreshTimer = null;
+
   // Load extension state and recent work codes from storage
   async function loadExtensionState() {
     try {
@@ -1042,7 +1045,6 @@
 
   const RESTRICTED_PATHS = ['C-Returns_StowSweep', 'Vreturns WaterSpider', 'C-Returns_EndofLine'];
   const PATH_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
-  let pathRefreshTimer = null;
 
   async function refreshPathAAs() {
     const refreshBtn = document.getElementById('fc-lt-refresh-paths');
