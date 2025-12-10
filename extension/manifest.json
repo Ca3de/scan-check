@@ -1,14 +1,14 @@
 {
   "manifest_version": 2,
   "name": "FC Labor Tracking Assistant",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Assists with work code and badge ID entry on Amazon FC labor tracking kiosk. Includes MPV (Multiple Path Violation) checking via FCLM integration.",
   "author": "Ca3de",
   "homepage_url": "https://github.com/Ca3de/scan-check",
   "browser_specific_settings": {
     "gecko": {
       "id": "fc-labor-tracking@ca3de.github.io",
-      "strict_min_version": "142.0",
+      "strict_min_version": "139.0",
       "data_collection_permissions": {
         "required": ["none"]
       }
