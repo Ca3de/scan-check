@@ -753,14 +753,27 @@
   // ============== START ==============
 
   // Notify background script that FCLM page is ready
-  browser.runtime.sendMessage({
-    action: 'contentScriptReady',
-    pageType: 'fclm',
-    url: window.location.href,
-    warehouseId: CONFIG.WAREHOUSE_ID
-  }).catch(err => {
-    log(`Could not notify background: ${err.message}`, 'warn');
-  });
+  function registerWithBackground() {
+    browser.runtime.sendMessage({
+      action: 'contentScriptReady',
+      pageType: 'fclm',
+      url: window.location.href,
+      warehouseId: CONFIG.WAREHOUSE_ID
+    }).then(() => {
+      log('Registered with background script', 'success');
+    }).catch(err => {
+      log(`Could not register with background: ${err.message}`, 'warn');
+    });
+  }
+
+  // Initial registration
+  registerWithBackground();
+
+  // Heartbeat - re-register every 30 seconds to keep connection alive
+  // This handles cases where the content script context gets invalidated
+  setInterval(() => {
+    registerWithBackground();
+  }, 30000);
 
   // Create status indicator
   createStatusIndicator();

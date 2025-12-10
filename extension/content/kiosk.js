@@ -1817,8 +1817,20 @@
   // Initial FCLM status check
   setTimeout(updateFclmStatus, 1000);
 
-  // Periodic status update
-  setInterval(updateFclmStatus, 30000);
+  // Periodic status update - check every 15 seconds for faster reconnection
+  setInterval(updateFclmStatus, 15000);
+
+  // Make status indicator clickable to manually check connection
+  setTimeout(() => {
+    const statusEl = document.getElementById('fc-lt-fclm-status');
+    if (statusEl) {
+      statusEl.style.cursor = 'pointer';
+      statusEl.addEventListener('click', () => {
+        statusEl.textContent = 'Checking...';
+        updateFclmStatus();
+      });
+    }
+  }, 1500);
 
   async function handleWorkCodeInput(workCode) {
     console.log('[FC Labor Tracking] Attempting to input work code:', workCode);
