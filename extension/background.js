@@ -129,6 +129,26 @@
         return false;
       }
     }
+
+    // Fetch AAs on restricted paths from FCLM
+    if (message.action === 'fetchPathAAs') {
+      const fclmTab = getAvailableFclmTab();
+      if (fclmTab) {
+        browser.tabs.sendMessage(fclmTab.tabId, {
+          action: 'fetchPathAAs',
+          paths: message.paths
+        })
+          .then(response => sendResponse(response))
+          .catch(error => {
+            connectedTabs.fclmTabs = connectedTabs.fclmTabs.filter(t => t.tabId !== fclmTab.tabId);
+            sendResponse({ success: false, error: error.message });
+          });
+        return true; // Async response
+      } else {
+        sendResponse({ success: false, error: 'FCLM tab not connected. Please open fclm-portal.amazon.com' });
+        return false;
+      }
+    }
   });
 
   function handleContentScriptReady(message, sender) {
