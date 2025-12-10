@@ -37,6 +37,10 @@
   // Path refresh timer for auto-refresh every 15 minutes
   let pathRefreshTimer = null;
 
+  // Restricted paths configuration
+  const RESTRICTED_PATHS = ['C-Returns_StowSweep', 'Vreturns WaterSpider', 'C-Returns_EndofLine'];
+  const PATH_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
+
   // Load extension state and recent work codes from storage
   async function loadExtensionState() {
     try {
@@ -1042,9 +1046,6 @@
   }
 
   // ============== PATH AA TRACKING ==============
-
-  const RESTRICTED_PATHS = ['C-Returns_StowSweep', 'Vreturns WaterSpider', 'C-Returns_EndofLine'];
-  const PATH_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
   async function refreshPathAAs() {
     const refreshBtn = document.getElementById('fc-lt-refresh-paths');
