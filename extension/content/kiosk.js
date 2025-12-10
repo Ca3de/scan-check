@@ -900,6 +900,7 @@
     // Track the last badge we processed to avoid duplicate lookups
     let lastProcessedBadge = '';
     let isProcessing = false;
+    let bypassingInterception = false; // Global bypass flag for our own submissions
 
     // Main flow: on input, start lookup, then auto-submit if cleared
     async function processBadgeScan(badgeId) {
@@ -970,23 +971,41 @@
 
     // Actually submit the badge to the native form (called after MPV cleared)
     async function actuallySubmitBadge(badgeId) {
-      // Set the value
-      nativeBadgeInput.value = badgeId;
+      console.log('[FC Labor Tracking] actuallySubmitBadge called with:', badgeId);
+
+      // Set the value using native setter for React compatibility
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeInputValueSetter.call(nativeBadgeInput, badgeId);
+
+      // Dispatch events
       nativeBadgeInput.dispatchEvent(new Event('input', { bubbles: true }));
       nativeBadgeInput.dispatchEvent(new Event('change', { bubbles: true }));
 
-      await sleep(100);
+      await sleep(150);
 
-      // Find and click the Done button
-      const submitBtn = document.querySelector('input[type="submit"][value="Done"]') ||
-                        document.querySelector('input[type="submit"]');
-      if (submitBtn) {
-        // Temporarily disable our interception for this click
-        submitBtn.dataset.fcBypass = 'true';
-        submitBtn.click();
-        delete submitBtn.dataset.fcBypass;
-      } else if (nativeForm) {
-        nativeForm.submit();
+      // Set bypass flag BEFORE submitting
+      bypassingInterception = true;
+      console.log('[FC Labor Tracking] Bypass flag set, submitting form...');
+
+      try {
+        // Submit the form directly (most reliable)
+        if (nativeForm) {
+          console.log('[FC Labor Tracking] Submitting via form.submit()');
+          nativeForm.submit();
+        } else {
+          // Fallback: click the Done button
+          const submitBtn = document.querySelector('input[type="submit"][value="Done"]') ||
+                            document.querySelector('input[type="submit"]');
+          if (submitBtn) {
+            console.log('[FC Labor Tracking] Submitting via button click');
+            submitBtn.click();
+          }
+        }
+      } finally {
+        // Reset bypass flag after a short delay
+        setTimeout(() => {
+          bypassingInterception = false;
+        }, 500);
       }
     }
 
@@ -1026,10 +1045,14 @@
       }
     }, true);
 
-    // Block form submit - we handle it ourselves
+    // Block form submit - we handle it ourselves (unless bypassing)
     if (nativeForm) {
       nativeForm.addEventListener('submit', (e) => {
         if (!extensionEnabled) return;
+        if (bypassingInterception) {
+          console.log('[FC Labor Tracking] Form submit - BYPASS mode, allowing');
+          return;
+        }
 
         console.log('[FC Labor Tracking] Form submit BLOCKED');
         e.preventDefault();
@@ -1042,8 +1065,8 @@
                        document.querySelector('input[type="submit"]');
     if (doneButton) {
       doneButton.addEventListener('click', (e) => {
-        // Check if this is our own bypass click
-        if (doneButton.dataset.fcBypass === 'true') {
+        // Check if this is our own bypass
+        if (bypassingInterception) {
           console.log('[FC Labor Tracking] Done button - BYPASS mode, allowing');
           return;
         }
@@ -1055,7 +1078,7 @@
 
         const badgeId = nativeBadgeInput.value.trim();
         if (badgeId.length === 0) {
-          console.log('[FC Labor Tracking] Done button - no badge, allowing');
+          console.log('[FC Labor Tracking] Done button - no badge, allowing (finishing session)');
           return;
         }
 
