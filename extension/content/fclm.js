@@ -700,9 +700,57 @@
 
           log(`Parsing table for path: ${tablePath}`);
 
-          // Find data rows (skip header rows)
+          // Find the header row to determine the "Total" column index
           const rows = table.querySelectorAll('tr');
+          let totalColumnIndex = -1;
+          let idColumnIndex = 1; // Default: ID is usually second column
+          let nameColumnIndex = 2; // Default: Name is usually third column
 
+          // First pass: find header row and column indices
+          for (const row of rows) {
+            const headerCells = row.querySelectorAll('th');
+            if (headerCells.length > 0) {
+              // This is a header row - find column indices
+              for (let i = 0; i < headerCells.length; i++) {
+                const headerText = headerCells[i]?.textContent?.trim()?.toLowerCase() || '';
+                if (headerText === 'total') {
+                  totalColumnIndex = i;
+                  log(`Found Total column at index ${i}`);
+                }
+                if (headerText === 'id' || headerText === 'badge' || headerText === 'employee id') {
+                  idColumnIndex = i;
+                }
+                if (headerText === 'name' || headerText === 'employee name') {
+                  nameColumnIndex = i;
+                }
+              }
+              break; // Only process first header row
+            }
+
+            // Also check for header-style td cells (some tables use td for headers)
+            const cells = row.querySelectorAll('td');
+            if (cells.length > 0) {
+              const firstCellText = cells[0]?.textContent?.trim() || '';
+              if (firstCellText === 'Type') {
+                // This is a header row using td elements
+                for (let i = 0; i < cells.length; i++) {
+                  const cellText = cells[i]?.textContent?.trim()?.toLowerCase() || '';
+                  if (cellText === 'total') {
+                    totalColumnIndex = i;
+                    log(`Found Total column at index ${i} (td header)`);
+                  }
+                }
+                break;
+              }
+            }
+          }
+
+          // If we couldn't find Total column, try to infer from last numeric column
+          if (totalColumnIndex === -1) {
+            log(`Could not find Total column header, will use last numeric cell`);
+          }
+
+          // Second pass: parse data rows
           for (const row of rows) {
             const cells = row.querySelectorAll('td');
             if (cells.length < 5) continue;
@@ -715,22 +763,63 @@
             // Type is usually "AMZN"
             if (firstCellText !== 'AMZN') continue;
 
-            // Get badge ID from second cell (may be a link)
-            const idCell = cells[1];
+            // DEBUG: Log all cell values for this row
+            const cellValues = Array.from(cells).map((c, i) => `[${i}]=${c.textContent.trim().substring(0, 15)}`);
+            log(`Row cells (${cells.length} total): ${cellValues.join(' | ')}`);
+
+            // Get badge ID from ID column (may be a link)
+            const idCell = cells[idColumnIndex];
             const idLink = idCell?.querySelector('a');
             const badgeId = idLink ? idLink.textContent.trim() : idCell?.textContent?.trim();
 
             if (!badgeId || !/^\d+$/.test(badgeId)) continue;
 
-            // Get name from third cell
-            const nameCell = cells[2];
+            // Get name from Name column
+            const nameCell = cells[nameColumnIndex];
             const nameLink = nameCell?.querySelector('a');
             const name = nameLink ? nameLink.textContent.trim() : nameCell?.textContent?.trim() || '';
 
-            // Get total hours from last cell
-            const totalCell = cells[cells.length - 1];
-            const totalText = totalCell?.textContent?.trim() || '0';
-            const hours = parseFloat(totalText) || 0;
+            // Get total hours - use found index or find last numeric cell
+            let hours = 0;
+            let hoursSource = 'none';
+            if (totalColumnIndex !== -1 && totalColumnIndex < cells.length) {
+              const totalText = cells[totalColumnIndex]?.textContent?.trim() || '0';
+              hours = parseFloat(totalText) || 0;
+              hoursSource = `col[${totalColumnIndex}]="${totalText}"`;
+            } else {
+              // Fallback: find the last cell that contains a valid number
+              // Start from the end and work backwards
+              for (let i = cells.length - 1; i >= 3; i--) {
+                const cellText = cells[i]?.textContent?.trim() || '';
+                // Check if it looks like a number (hours can be decimals like "8.37")
+                if (/^[\d.]+$/.test(cellText) && cellText !== '') {
+                  const parsed = parseFloat(cellText);
+                  if (!isNaN(parsed)) {
+                    hours = parsed;
+                    hoursSource = `fallback col[${i}]="${cellText}"`;
+                    break;
+                  }
+                }
+              }
+            }
+
+            // If still 0, try summing all numeric cells (hourly breakdown columns)
+            if (hours === 0) {
+              let summedHours = 0;
+              for (let i = 4; i < cells.length - 1; i++) { // Skip first 4 cols and last col
+                const cellText = cells[i]?.textContent?.trim() || '';
+                if (/^[\d.]+$/.test(cellText)) {
+                  summedHours += parseFloat(cellText) || 0;
+                }
+              }
+              if (summedHours > 0) {
+                hours = summedHours;
+                hoursSource = `summed=${summedHours.toFixed(2)}`;
+              }
+            }
+
+            log(`Hours for ${name}: ${hours}h (source: ${hoursSource})`);
+
             const minutes = hours * 60;
 
             // Add to results if not already there
