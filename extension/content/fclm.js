@@ -30,9 +30,13 @@
   }
 
   // Calculate shift date range based on current time (for night shift)
+  // Night shift: 18:00 (6PM) to 06:00 (6AM next day)
   function getShiftDateRange() {
     const now = new Date();
     const currentHour = now.getHours();
+    const currentMinutes = now.getMinutes();
+
+    log(`Current time: ${currentHour}:${String(currentMinutes).padStart(2, '0')} (hour=${currentHour})`);
 
     let startDate, endDate;
 
@@ -41,17 +45,19 @@
       startDate = new Date(now);
       endDate = new Date(now);
       endDate.setDate(endDate.getDate() + 1);
+      log(`Evening shift: ${currentHour}:00 >= 18:00, so start=today, end=tomorrow`);
     } else if (currentHour < CONFIG.SHIFT_END_HOUR) {
-      // Between 12AM-6AM: shift started yesterday, ends today
+      // Between 12AM-5:59AM: shift started yesterday, ends today
       startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 1);
       endDate = new Date(now);
+      log(`Early morning shift: ${currentHour}:00 < 06:00, so start=yesterday, end=today`);
     } else {
-      // Between 6AM-6PM: use today as day shift or previous night
-      // Default to checking previous night shift
+      // Between 6AM-5:59PM: daytime - check previous night shift
       startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 1);
       endDate = new Date(now);
+      log(`Daytime (${currentHour}:00): checking previous night shift, start=yesterday, end=today`);
     }
 
     const formatDate = (d) => {
@@ -61,12 +67,16 @@
       return `${year}/${month}/${day}`;
     };
 
-    return {
+    const result = {
       startDate: formatDate(startDate),
       endDate: formatDate(endDate),
       startHour: CONFIG.SHIFT_START_HOUR,
       endHour: CONFIG.SHIFT_END_HOUR
     };
+
+    log(`Shift range: ${result.startDate} ${result.startHour}:00 to ${result.endDate} ${result.endHour}:00`, 'success');
+
+    return result;
   }
 
   // ============== FETCH EMPLOYEE TIME DETAILS ==============
