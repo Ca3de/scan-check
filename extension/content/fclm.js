@@ -379,17 +379,27 @@
 
     log(`Found ${rows.length} rows in parsed table`);
 
+    // DEBUG: Track all restricted path time from function-seg (aggregate rows)
+    let functionSegTotals = {};
+
     for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
       const row = rows[rowIdx];
       const rowClass = row.className || '';
 
       // Skip non-data rows
       if (rowClass.includes('totSummary') || row.querySelector('th')) {
+        log(`Skipping row ${rowIdx}: totSummary or th`);
         continue;
       }
 
       const cells = row.querySelectorAll('td');
-      if (cells.length < 4) continue;
+      if (cells.length < 4) {
+        log(`Skipping row ${rowIdx}: only ${cells.length} cells`);
+        continue;
+      }
+
+      // DEBUG: Log raw row content
+      log(`Row ${rowIdx} [${rowClass}]: ${Array.from(cells).map(c => c.textContent.trim().substring(0, 20)).join(' | ')}`);
 
       let title = '';
       let start = '';
@@ -446,10 +456,18 @@
         continue;
       }
 
-      // IMPORTANT: For MPV time calculation, only count job-seg rows
-      // function-seg rows show aggregate time that OVERLAPS with job-seg rows
+      // Track function-seg totals (aggregate time per path)
+      // These are the TOTAL time for a path, useful for comparison
       if (rowClass.includes('function-seg')) {
-        log(`Skipping function-seg row for MPV (overlaps with job-seg): ${title} - ${duration}`);
+        const durationMins = parseDurationToMinutes(duration);
+        functionSegTotals[title] = (functionSegTotals[title] || 0) + durationMins;
+        log(`function-seg TOTAL for "${title}": ${duration} (${durationMins.toFixed(1)} mins)`);
+        // Don't skip - we'll use this for verification but also parse job-seg rows
+      }
+
+      // Skip function-seg for session counting (job-seg has the actual sessions)
+      // But we captured the total above for comparison
+      if (rowClass.includes('function-seg')) {
         continue;
       }
 
@@ -475,6 +493,37 @@
 
     log(`Total sessions parsed: ${result.sessions.length}`);
 
+    // DEBUG: Log function-seg totals vs job-seg totals
+    log('=== TIME COMPARISON ===');
+    log(`function-seg totals (aggregate): ${JSON.stringify(functionSegTotals)}`);
+
+    // Calculate job-seg totals per path for comparison
+    const jobSegTotals = {};
+    result.sessions.forEach(session => {
+      jobSegTotals[session.title] = (jobSegTotals[session.title] || 0) + session.durationMinutes;
+    });
+    log(`job-seg totals (sum of sessions): ${JSON.stringify(jobSegTotals)}`);
+
+    // If function-seg totals are higher, use those instead (more accurate)
+    for (const [path, funcMins] of Object.entries(functionSegTotals)) {
+      const jobMins = jobSegTotals[path] || 0;
+      if (funcMins > jobMins) {
+        log(`WARNING: function-seg (${funcMins.toFixed(1)} min) > job-seg (${jobMins.toFixed(1)} min) for "${path}"`);
+        // Add a synthetic session with the difference to correct the total
+        const diff = funcMins - jobMins;
+        result.sessions.push({
+          title: path,
+          start: '',
+          end: '',
+          duration: `${Math.floor(diff)}:${Math.round((diff % 1) * 60)}`,
+          durationMinutes: diff,
+          rowType: 'correction',
+          note: 'Added to match function-seg total'
+        });
+        log(`Added correction session: +${diff.toFixed(1)} mins for "${path}"`);
+      }
+    }
+
     // Calculate total hours from OnClock/Paid entries
     result.sessions.forEach(session => {
       if (session.title.includes('OnClock/Paid')) {
@@ -489,7 +538,7 @@
       result.totalScheduledHours = parseFloat(hoursMatch[2]);
     }
 
-    log(`Parsed ${result.sessions.length} sessions for ${employeeId}`, 'success');
+    log(`Final session count: ${result.sessions.length} for ${employeeId}`, 'success');
     return result;
   }
 
