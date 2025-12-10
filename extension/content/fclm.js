@@ -101,35 +101,45 @@
     const url = buildTimeDetailsUrl(employeeId);
     log(`Target URL: ${url}`);
 
-    // Check if we're already on the CORRECT employee's timeDetails page
-    const currentUrl = window.location.href;
-    const isOnTimeDetailsPage = currentUrl.includes('/employee/timeDetails');
-    const isCorrectEmployee = currentUrl.includes(`employeeId=${employeeId}`);
+    // Use direct fetch() API instead of navigation - MUCH FASTER!
+    try {
+      log(`Fetching timeDetails via fetch() API...`);
+      const response = await fetch(url, { credentials: 'include' });
+      const html = await response.text();
 
-    if (isOnTimeDetailsPage && isCorrectEmployee) {
-      log(`Already on timeDetails page for employee ${employeeId}, scraping live DOM...`);
-      return scrapeTimeDetailsFromLiveDOM(employeeId);
+      log(`Got HTML response (${html.length} chars), parsing...`);
+      const result = parseTimeDetailsHtml(html, employeeId);
+      log(`Parsed ${result.sessions.length} sessions via fetch()`, 'success');
+      return result;
+
+    } catch (fetchError) {
+      log(`Fetch failed: ${fetchError.message}, trying live DOM scrape...`, 'warn');
+
+      // Fallback: Check if we're already on the correct page
+      const currentUrl = window.location.href;
+      const isOnTimeDetailsPage = currentUrl.includes('/employee/timeDetails');
+      const isCorrectEmployee = currentUrl.includes(`employeeId=${employeeId}`);
+
+      if (isOnTimeDetailsPage && isCorrectEmployee) {
+        log(`Already on timeDetails page for employee ${employeeId}, scraping live DOM...`);
+        return scrapeTimeDetailsFromLiveDOM(employeeId);
+      }
+
+      // Last resort: navigation (slow path)
+      log(`Falling back to navigation for ${employeeId}...`, 'warn');
+      sessionStorage.setItem('fc_pending_lookup', JSON.stringify({
+        employeeId,
+        timestamp: Date.now()
+      }));
+      window.location.href = url;
+
+      return {
+        employeeId,
+        sessions: [],
+        pending: true,
+        message: 'Navigating to time details page...'
+      };
     }
-
-    // Need to navigate to the correct employee's page
-    log(`Navigating to timeDetails page for employee ${employeeId}...`);
-
-    // Store the request in sessionStorage so we can complete it after navigation
-    sessionStorage.setItem('fc_pending_lookup', JSON.stringify({
-      employeeId,
-      timestamp: Date.now()
-    }));
-
-    // Navigate to the time details page
-    window.location.href = url;
-
-    // Return a pending response - the actual data will be sent after page loads
-    return {
-      employeeId,
-      sessions: [],
-      pending: true,
-      message: 'Navigating to time details page...'
-    };
   }
 
   // Scrape time details from the live DOM (after JavaScript has rendered)

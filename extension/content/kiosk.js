@@ -163,11 +163,30 @@
   });
 
   function createFloatingPanel() {
-    // Remove existing panel if any
+    // Remove existing panels if any
     const existing = document.getElementById('fc-labor-tracking-panel');
     if (existing) existing.remove();
+    const existingLeft = document.getElementById('fc-path-tracking-panel');
+    if (existingLeft) existingLeft.remove();
 
-    // Create panel container
+    // Create LEFT panel - Restricted Path AAs
+    const leftPanel = document.createElement('div');
+    leftPanel.id = 'fc-path-tracking-panel';
+    leftPanel.innerHTML = `
+      <div class="fc-lt-header">
+        <span class="fc-lt-title">Restricted Path AAs</span>
+        <button id="fc-lt-refresh-paths" class="fc-lt-refresh-btn" title="Refresh">↻</button>
+        <button class="fc-lt-minimize fc-lt-minimize-left" title="Minimize">_</button>
+      </div>
+      <div class="fc-lt-body">
+        <div class="fc-lt-path-updated" id="fc-lt-path-updated">Not loaded</div>
+        <div class="fc-lt-path-list" id="fc-lt-path-list">
+          <div class="fc-lt-path-empty">Click ↻ to load AAs</div>
+        </div>
+      </div>
+    `;
+
+    // Create RIGHT panel - Labor Tracking Assistant
     const panel = document.createElement('div');
     panel.id = 'fc-labor-tracking-panel';
     panel.innerHTML = `
@@ -197,16 +216,6 @@
           <button id="fc-lt-done" class="fc-lt-btn success">Done</button>
           <button id="fc-lt-back" class="fc-lt-btn secondary">Back</button>
         </div>
-        <div class="fc-lt-section" id="fc-lt-path-tracking">
-          <div class="fc-lt-path-header">
-            <label>Restricted Path AAs</label>
-            <button id="fc-lt-refresh-paths" class="fc-lt-refresh-btn" title="Refresh">↻</button>
-          </div>
-          <div class="fc-lt-path-updated" id="fc-lt-path-updated">Not loaded</div>
-          <div class="fc-lt-path-list" id="fc-lt-path-list">
-            <div class="fc-lt-path-empty">Click ↻ to load AAs on STWSWP, VRWS, CREOL</div>
-          </div>
-        </div>
         <div class="fc-lt-message hidden" id="fc-lt-message"></div>
       </div>
     `;
@@ -214,10 +223,9 @@
     // Add styles
     const styles = document.createElement('style');
     styles.textContent = `
-      #fc-labor-tracking-panel {
+      #fc-labor-tracking-panel, #fc-path-tracking-panel {
         position: fixed;
         top: 20px;
-        right: 20px;
         width: 280px;
         background: #1a1a2e;
         border-radius: 8px;
@@ -227,10 +235,19 @@
         color: #fff;
         overflow: hidden;
       }
-      #fc-labor-tracking-panel.minimized .fc-lt-body {
+      #fc-labor-tracking-panel {
+        right: 20px;
+      }
+      #fc-path-tracking-panel {
+        left: 20px;
+        width: 260px;
+      }
+      #fc-labor-tracking-panel.minimized .fc-lt-body,
+      #fc-path-tracking-panel.minimized .fc-lt-body {
         display: none;
       }
-      #fc-labor-tracking-panel.minimized {
+      #fc-labor-tracking-panel.minimized,
+      #fc-path-tracking-panel.minimized {
         width: auto;
       }
       .fc-lt-header {
@@ -240,10 +257,12 @@
         justify-content: space-between;
         align-items: center;
         cursor: move;
+        gap: 8px;
       }
       .fc-lt-title {
         font-size: 13px;
         font-weight: 600;
+        flex-grow: 1;
       }
       .fc-lt-minimize {
         background: none;
@@ -564,13 +583,16 @@
     `;
 
     document.head.appendChild(styles);
+    document.body.appendChild(leftPanel);
     document.body.appendChild(panel);
 
-    // Setup event listeners
+    // Setup event listeners for both panels
     setupPanelEvents(panel);
+    setupLeftPanelEvents(leftPanel);
 
-    // Make panel draggable
+    // Make both panels draggable
     makeDraggable(panel);
+    makeDraggable(leftPanel);
 
     // Auto-show badge section if on badge page
     if (isBadgePage) {
@@ -580,6 +602,53 @@
     } else {
       document.getElementById('fc-lt-workcode').focus();
     }
+  }
+
+  function setupLeftPanelEvents(panel) {
+    const minimizeBtn = panel.querySelector('.fc-lt-minimize-left');
+    const refreshBtn = document.getElementById('fc-lt-refresh-paths');
+
+    // Minimize toggle
+    if (minimizeBtn) {
+      minimizeBtn.addEventListener('click', () => {
+        panel.classList.toggle('minimized');
+        minimizeBtn.textContent = panel.classList.contains('minimized') ? '+' : '_';
+      });
+    }
+
+    // Refresh path AAs
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => refreshPathAAs());
+    }
+
+    // Load cached path data on init
+    loadCachedPathAAs();
+
+    // Start auto-refresh timer for restricted paths (every 15 minutes)
+    startPathAutoRefresh();
+  }
+
+  function startPathAutoRefresh() {
+    // Clear any existing timer
+    if (pathRefreshTimer) {
+      clearInterval(pathRefreshTimer);
+    }
+
+    // Auto-refresh every 15 minutes
+    pathRefreshTimer = setInterval(() => {
+      console.log('[FC Labor Tracking] Auto-refreshing restricted path AAs...');
+      refreshPathAAs();
+    }, PATH_REFRESH_INTERVAL);
+
+    console.log('[FC Labor Tracking] Path auto-refresh started (every 15 minutes)');
+
+    // Also do an initial refresh if cache is old or empty
+    browser.storage.local.get(['pathAAsUpdated']).then(data => {
+      if (!data.pathAAsUpdated || (Date.now() - data.pathAAsUpdated > PATH_REFRESH_INTERVAL)) {
+        console.log('[FC Labor Tracking] Cache stale, doing initial refresh...');
+        setTimeout(refreshPathAAs, 2000); // Slight delay to not overwhelm on load
+      }
+    });
   }
 
   function setupPanelEvents(panel) {
@@ -673,14 +742,6 @@
     // Back button - triggers the page's back functionality
     backBtn.addEventListener('click', () => triggerBack());
 
-    // Refresh path AAs button
-    const refreshPathsBtn = document.getElementById('fc-lt-refresh-paths');
-    if (refreshPathsBtn) {
-      refreshPathsBtn.addEventListener('click', () => refreshPathAAs());
-    }
-
-    // Load cached path data on init
-    loadCachedPathAAs();
   }
 
   function makeDraggable(panel) {
@@ -1054,11 +1115,7 @@
             updatedDiv.textContent = 'Updated: ' + new Date(data.pathAAsUpdated).toLocaleTimeString();
           }
         }
-
-        // Auto-refresh if data is older than 15 minutes
-        if (Date.now() - data.pathAAsUpdated > PATH_REFRESH_INTERVAL) {
-          setTimeout(refreshPathAAs, 2000); // Slight delay to not overwhelm on load
-        }
+        // Note: Auto-refresh is handled by startPathAutoRefresh()
       }
     } catch (e) {
       console.log('[FC Labor Tracking] Could not load cached path AAs:', e);
@@ -1142,6 +1199,91 @@
 
   // ============== FCLM INTEGRATION ==============
 
+  // Quick MPV check using cached pathAAs data (no navigation needed!)
+  async function quickMpvCheckFromCache(badgeId, targetWorkCode) {
+    const targetPath = getRestrictedPathForWorkCode(targetWorkCode);
+
+    // If not a restricted work code, skip quick check
+    if (!targetPath) {
+      console.log('[FC Labor Tracking] Not a restricted path, skipping quick check');
+      return null;
+    }
+
+    console.log('[FC Labor Tracking] Quick MPV check for badge:', badgeId, 'target:', targetPath);
+
+    try {
+      const data = await browser.storage.local.get(['pathAAs', 'pathAAsUpdated']);
+
+      // Check if cache is fresh enough (within 30 minutes)
+      if (!data.pathAAs || !data.pathAAsUpdated || (Date.now() - data.pathAAsUpdated > 30 * 60 * 1000)) {
+        console.log('[FC Labor Tracking] Cache is stale or empty, falling back to full lookup');
+        return null;
+      }
+
+      // Search for badge in cached path data
+      let foundPath = null;
+      let foundHours = 0;
+
+      for (const [pathName, aas] of Object.entries(data.pathAAs)) {
+        const aa = aas.find(a => a.badgeId === badgeId);
+        if (aa) {
+          foundPath = pathName;
+          foundHours = aa.hours || (aa.minutes / 60) || 0;
+          console.log('[FC Labor Tracking] Found badge in cache:', pathName, foundHours + 'h');
+          break;
+        }
+      }
+
+      // Build result based on cached data
+      const result = {
+        hasMpvRisk: false,
+        reason: null,
+        details: null,
+        workedPaths: foundPath ? [foundPath] : [],
+        targetPath: targetPath,
+        pathTimes: {},
+        fromCache: true
+      };
+
+      if (foundPath) {
+        result.pathTimes[foundPath] = foundHours * 60; // Convert to minutes
+
+        // Check for path switch MPV
+        if (foundPath !== targetPath) {
+          result.hasMpvRisk = true;
+          result.reason = 'PATH_SWITCH';
+          result.details = `Already worked ${foundPath} (${foundHours.toFixed(2)}h). Cannot switch to ${targetPath}.`;
+          console.log('[FC Labor Tracking] QUICK MPV BLOCK - Path switch detected!');
+          return result;
+        }
+
+        // Check for time exceeded (4h 30m = 270 min)
+        const totalMinutes = foundHours * 60;
+        if (totalMinutes >= MPV_MAX_TIME_MINUTES) {
+          result.hasMpvRisk = true;
+          result.reason = 'TIME_EXCEEDED';
+          result.details = `Already ${foundHours.toFixed(2)}h on ${targetPath}. Max allowed is ${formatMinutes(MPV_MAX_TIME_MINUTES)}.`;
+          console.log('[FC Labor Tracking] QUICK MPV BLOCK - Time exceeded!');
+          return result;
+        }
+
+        // Same path, under limit - show remaining time
+        result.remainingTime = MPV_MAX_TIME_MINUTES - totalMinutes;
+        result.currentTime = totalMinutes;
+        console.log('[FC Labor Tracking] Quick check OK - same path, time remaining:', result.remainingTime);
+        return result;
+      }
+
+      // Badge not in any restricted path - OK to assign
+      console.log('[FC Labor Tracking] Badge not in cached paths - OK for first time on restricted path');
+      return result;
+
+    } catch (e) {
+      console.log('[FC Labor Tracking] Quick check error:', e);
+      return null;
+    }
+  }
+
   function debounce(func, wait) {
     let timeout;
     return function executedFunction(...args) {
@@ -1170,6 +1312,80 @@
       });
       const currentWorkCode = workCodeResponse?.workCode || null;
       console.log('[FC Labor Tracking] Current work code for MPV check:', currentWorkCode);
+
+      // FAST PATH: Try quick MPV check using cached path data first
+      // This avoids slow navigation to timeDetails page for restricted paths
+      const quickResult = await quickMpvCheckFromCache(badgeId, currentWorkCode);
+      if (quickResult) {
+        console.log('[FC Labor Tracking] Quick MPV result from cache:', quickResult.hasMpvRisk ? 'BLOCKED' : 'OK');
+        currentMpvCheckResult = quickResult;
+
+        // Show result immediately (no navigation needed!)
+        const infoDiv = document.getElementById('fc-lt-associate-info');
+        const nameDiv = document.getElementById('fc-lt-associate-name');
+        const detailsDiv = document.getElementById('fc-lt-associate-details');
+
+        if (infoDiv) {
+          infoDiv.classList.remove('hidden', 'not-found', 'mpv-warning', 'mpv-ok');
+          nameDiv.textContent = `Badge: ${badgeId}`;
+
+          if (quickResult.hasMpvRisk) {
+            infoDiv.classList.add('mpv-warning');
+            let alertText = '🚫 MPV BLOCKED!';
+            if (quickResult.reason === 'PATH_SWITCH') alertText = '🚫 MPV - PATH SWITCH!';
+            else if (quickResult.reason === 'TIME_EXCEEDED') alertText = '🚫 MPV - TIME EXCEEDED!';
+
+            detailsDiv.textContent = '';
+            const alert = document.createElement('div');
+            alert.className = 'mpv-alert';
+            alert.textContent = alertText;
+            detailsDiv.appendChild(alert);
+            const details = document.createElement('div');
+            details.className = 'mpv-details';
+            details.textContent = quickResult.details;
+            detailsDiv.appendChild(details);
+            const cache = document.createElement('div');
+            cache.style.cssText = 'font-size:9px;color:#666;margin-top:4px;';
+            cache.textContent = '(from cached data)';
+            detailsDiv.appendChild(cache);
+
+            showPanelMessage('🚫 MPV Risk - Cannot assign!', 'error');
+          } else if (quickResult.remainingTime) {
+            infoDiv.classList.add('mpv-ok');
+            detailsDiv.textContent = '';
+            const okAlert = document.createElement('div');
+            okAlert.className = 'mpv-ok-alert';
+            okAlert.textContent = '✓ OK - Same path';
+            detailsDiv.appendChild(okAlert);
+            const pathSpan = document.createElement('strong');
+            pathSpan.textContent = quickResult.targetPath;
+            detailsDiv.appendChild(pathSpan);
+            detailsDiv.appendChild(document.createElement('br'));
+            detailsDiv.appendChild(document.createTextNode(`Used: ${formatMinutes(quickResult.currentTime)} | Remaining: ${formatMinutes(quickResult.remainingTime)}`));
+
+            showPanelMessage(`✓ OK - ${formatMinutes(quickResult.remainingTime)} remaining`, 'success');
+          } else {
+            infoDiv.classList.add('mpv-ok');
+            detailsDiv.textContent = '';
+            const okAlert = document.createElement('div');
+            okAlert.className = 'mpv-ok-alert';
+            okAlert.textContent = '✓ OK - First time on path';
+            detailsDiv.appendChild(okAlert);
+            const pathSpan = document.createElement('strong');
+            pathSpan.textContent = quickResult.targetPath;
+            detailsDiv.appendChild(pathSpan);
+
+            showPanelMessage('✓ First time on restricted path', 'success');
+          }
+        }
+
+        // Quick check complete - no need for slow timeDetails lookup!
+        return;
+      }
+
+      // SLOW PATH: No cache hit or non-restricted work code
+      // Fall back to full timeDetails lookup via FCLM navigation
+      console.log('[FC Labor Tracking] No quick result, falling back to full FCLM lookup');
 
       // Store the badge ID in case we get an async result later
       pendingBadgeLookup = badgeId;
