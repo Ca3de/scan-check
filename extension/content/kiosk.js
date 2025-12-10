@@ -897,93 +897,177 @@
     const nativeForm = nativeBadgeInput.closest('form');
     console.log('[FC Labor Tracking] Found native badge input and form:', !!nativeForm);
 
-    // Sync native input to panel and start lookup when extension is enabled
-    nativeBadgeInput.addEventListener('input', debounce(async () => {
-      const badgeId = nativeBadgeInput.value.trim();
+    // Track the last badge we processed to avoid duplicate lookups
+    let lastProcessedBadge = '';
+    let isProcessing = false;
+
+    // Main flow: on input, start lookup, then auto-submit if cleared
+    async function processBadgeScan(badgeId) {
+      if (!badgeId || badgeId.length < 3 || isProcessing || badgeId === lastProcessedBadge) {
+        return;
+      }
+
+      console.log('[FC Labor Tracking] Processing badge scan:', badgeId);
+      isProcessing = true;
+      lastProcessedBadge = badgeId;
+
       // Sync to our panel input for display
+      const panelInput = document.getElementById('fc-lt-badge');
+      if (panelInput) {
+        panelInput.value = badgeId;
+      }
+
+      try {
+        // Start MPV lookup
+        showPanelMessage('Checking MPV status...', 'info');
+        await lookupAssociate(badgeId);
+
+        // After lookup completes, check result and auto-submit if cleared
+        if (currentMpvCheckResult && currentMpvCheckResult.hasMpvRisk) {
+          // MPV BLOCKED - do NOT submit
+          console.log('[FC Labor Tracking] MPV BLOCKED - NOT submitting badge');
+          showPanelMessage('🚫 MPV Risk - Badge NOT submitted!', 'error');
+
+          // Clear the input so they can't accidentally submit
+          nativeBadgeInput.value = '';
+          if (panelInput) panelInput.value = '';
+
+          // Flash warning
+          const infoDiv = document.getElementById('fc-lt-associate-info');
+          if (infoDiv) {
+            infoDiv.style.transform = 'scale(1.05)';
+            setTimeout(() => { infoDiv.style.transform = 'scale(1)'; }, 200);
+          }
+        } else {
+          // CLEARED - auto-submit the badge
+          console.log('[FC Labor Tracking] MPV CLEARED - auto-submitting badge');
+          showPanelMessage('✓ Cleared - Submitting...', 'success');
+
+          // Submit via native form
+          await actuallySubmitBadge(badgeId);
+
+          showPanelMessage('Badge added!', 'success');
+
+          // Clear for next badge
+          nativeBadgeInput.value = '';
+          if (panelInput) panelInput.value = '';
+          hideAssociateInfo();
+          currentMpvCheckResult = null;
+          lastProcessedBadge = '';
+
+          setTimeout(() => {
+            showPanelMessage('Ready for next badge', 'info');
+            nativeBadgeInput.focus();
+          }, 800);
+        }
+      } catch (error) {
+        console.log('[FC Labor Tracking] Lookup error:', error);
+        showPanelMessage('Error: ' + error.message, 'error');
+      } finally {
+        isProcessing = false;
+      }
+    }
+
+    // Actually submit the badge to the native form (called after MPV cleared)
+    async function actuallySubmitBadge(badgeId) {
+      // Set the value
+      nativeBadgeInput.value = badgeId;
+      nativeBadgeInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nativeBadgeInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+      await sleep(100);
+
+      // Find and click the Done button
+      const submitBtn = document.querySelector('input[type="submit"][value="Done"]') ||
+                        document.querySelector('input[type="submit"]');
+      if (submitBtn) {
+        // Temporarily disable our interception for this click
+        submitBtn.dataset.fcBypass = 'true';
+        submitBtn.click();
+        delete submitBtn.dataset.fcBypass;
+      } else if (nativeForm) {
+        nativeForm.submit();
+      }
+    }
+
+    // Sync native input to panel and trigger processing
+    nativeBadgeInput.addEventListener('input', debounce(() => {
+      const badgeId = nativeBadgeInput.value.trim();
+
+      // If extension disabled, don't intercept
+      if (!extensionEnabled) return;
+
+      // Sync to panel
       const panelInput = document.getElementById('fc-lt-badge');
       if (panelInput && panelInput.value !== badgeId) {
         panelInput.value = badgeId;
       }
 
-      // If extension enabled and badge is long enough, start lookup immediately
-      if (extensionEnabled && badgeId.length >= 3) {
-        console.log('[FC Labor Tracking] Native input - starting lookup for:', badgeId);
-        lookupInProgress = true;
-        lookupPromise = lookupAssociate(badgeId).finally(() => {
-          lookupInProgress = false;
-        });
+      // Process if valid badge length
+      if (badgeId.length >= 3) {
+        processBadgeScan(badgeId);
       }
-    }, 100)); // Short debounce to catch scanner input
+    }, 150));
 
-    // ALWAYS intercept Enter when extension is enabled - block until lookup done
-    nativeBadgeInput.addEventListener('keydown', async (e) => {
+    // ALWAYS block Enter key from scanner - we handle submission ourselves
+    nativeBadgeInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
-        // If extension is disabled, let native submit through
         if (!extensionEnabled) {
-          console.log('[FC Labor Tracking] Enter - extension DISABLED, allowing native submit');
+          console.log('[FC Labor Tracking] Enter - extension DISABLED, allowing native');
           return;
         }
 
-        // Extension is enabled - BLOCK and wait for lookup
-        console.log('[FC Labor Tracking] Enter pressed - extension ENABLED, intercepting');
+        // BLOCK Enter completely - our input handler already triggered the lookup
+        console.log('[FC Labor Tracking] Enter BLOCKED - lookup already in progress');
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-
-        // Sync badge to our panel and submit through our logic
-        const panelInput = document.getElementById('fc-lt-badge');
-        if (panelInput) {
-          panelInput.value = nativeBadgeInput.value;
-        }
-
-        await submitBadge();
+        // Do NOT call submitBadge - the input event already triggered processing
       }
-    }, true); // Use capture phase
+    }, true);
 
-    // ALWAYS intercept form submit when extension is enabled
+    // Block form submit - we handle it ourselves
     if (nativeForm) {
-      nativeForm.addEventListener('submit', async (e) => {
-        if (!extensionEnabled) {
-          console.log('[FC Labor Tracking] Form submit - extension DISABLED, allowing native');
-          return;
-        }
+      nativeForm.addEventListener('submit', (e) => {
+        if (!extensionEnabled) return;
 
-        console.log('[FC Labor Tracking] Form submit intercepted - extension ENABLED');
+        console.log('[FC Labor Tracking] Form submit BLOCKED');
         e.preventDefault();
         e.stopPropagation();
-
-        const panelInput = document.getElementById('fc-lt-badge');
-        if (panelInput) {
-          panelInput.value = nativeBadgeInput.value;
-        }
-
-        await submitBadge();
       }, true);
     }
 
-    // ALWAYS intercept Done button when extension is enabled
+    // Block Done button clicks (unless we're bypassing)
     const doneButton = document.querySelector('input[type="submit"][value="Done"]') ||
                        document.querySelector('input[type="submit"]');
     if (doneButton) {
-      doneButton.addEventListener('click', async (e) => {
-        const badgeId = nativeBadgeInput.value.trim();
-
-        if (!extensionEnabled || badgeId.length === 0) {
-          console.log('[FC Labor Tracking] Done button - extension disabled or no badge, allowing native');
+      doneButton.addEventListener('click', (e) => {
+        // Check if this is our own bypass click
+        if (doneButton.dataset.fcBypass === 'true') {
+          console.log('[FC Labor Tracking] Done button - BYPASS mode, allowing');
           return;
         }
 
-        console.log('[FC Labor Tracking] Done button clicked - extension ENABLED, intercepting');
+        if (!extensionEnabled) {
+          console.log('[FC Labor Tracking] Done button - extension disabled, allowing');
+          return;
+        }
+
+        const badgeId = nativeBadgeInput.value.trim();
+        if (badgeId.length === 0) {
+          console.log('[FC Labor Tracking] Done button - no badge, allowing');
+          return;
+        }
+
+        // Block the click - our flow handles submission
+        console.log('[FC Labor Tracking] Done button BLOCKED - use scanner flow');
         e.preventDefault();
         e.stopPropagation();
 
-        const panelInput = document.getElementById('fc-lt-badge');
-        if (panelInput) {
-          panelInput.value = badgeId;
+        // If not already processing, trigger it
+        if (!isProcessing) {
+          processBadgeScan(badgeId);
         }
-
-        await submitBadge();
       }, true);
     }
   }
