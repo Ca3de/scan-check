@@ -27,9 +27,75 @@
   let lookupInProgress = false;
   let lookupPromise = null;
 
-  // Track if extension is actively being used (to avoid intercepting direct scans)
-  // Only intercept if user has engaged with our panel or we've started a lookup
-  let extensionEngaged = false;
+  // Extension enabled state - when ON, intercepts all badge scans for MPV check
+  // When OFF, allows native form submission without any intervention
+  let extensionEnabled = true;
+
+  // Recent work codes for suggestions
+  let recentWorkCodes = [];
+
+  // Load extension state and recent work codes from storage
+  async function loadExtensionState() {
+    try {
+      const data = await browser.storage.local.get(['extensionEnabled', 'recentWorkCodes']);
+      if (data.extensionEnabled !== undefined) {
+        extensionEnabled = data.extensionEnabled;
+      }
+      if (data.recentWorkCodes) {
+        recentWorkCodes = data.recentWorkCodes;
+      }
+      console.log('[FC Labor Tracking] Loaded state - enabled:', extensionEnabled, 'workCodes:', recentWorkCodes.length);
+      updateToggleUI();
+    } catch (e) {
+      console.log('[FC Labor Tracking] Could not load state:', e);
+    }
+  }
+
+  async function saveExtensionState() {
+    try {
+      await browser.storage.local.set({
+        extensionEnabled,
+        recentWorkCodes: recentWorkCodes.slice(0, 20) // Keep last 20
+      });
+    } catch (e) {
+      console.log('[FC Labor Tracking] Could not save state:', e);
+    }
+  }
+
+  function toggleExtension() {
+    extensionEnabled = !extensionEnabled;
+    saveExtensionState();
+    updateToggleUI();
+    console.log('[FC Labor Tracking] Extension', extensionEnabled ? 'ENABLED' : 'DISABLED');
+  }
+
+  function updateToggleUI() {
+    const toggle = document.getElementById('fc-lt-toggle');
+    const panel = document.getElementById('fc-labor-tracking-panel');
+    if (toggle) {
+      toggle.textContent = extensionEnabled ? 'ON' : 'OFF';
+      toggle.className = 'fc-lt-toggle ' + (extensionEnabled ? 'on' : 'off');
+    }
+    if (panel) {
+      panel.classList.toggle('disabled', !extensionEnabled);
+    }
+  }
+
+  function addRecentWorkCode(code) {
+    const upper = code.toUpperCase();
+    // Remove if exists and add to front
+    recentWorkCodes = recentWorkCodes.filter(c => c !== upper);
+    recentWorkCodes.unshift(upper);
+    saveExtensionState();
+  }
+
+  function getWorkCodeSuggestions(input) {
+    const upper = input.toUpperCase();
+    if (!upper) return [];
+    return recentWorkCodes.filter(code => code.includes(upper) && code !== upper).slice(0, 5);
+  }
+
+  loadExtensionState();
 
   // Create floating panel UI
   createFloatingPanel();
@@ -108,12 +174,16 @@
       <div class="fc-lt-header">
         <span class="fc-lt-title">Labor Tracking Assistant</span>
         <span class="fc-lt-fclm-status" id="fc-lt-fclm-status" title="FCLM Data Status">--</span>
+        <button class="fc-lt-toggle on" id="fc-lt-toggle" title="Toggle MPV Check ON/OFF">ON</button>
         <button class="fc-lt-minimize" title="Minimize">_</button>
       </div>
       <div class="fc-lt-body">
         <div class="fc-lt-section" id="fc-lt-workcode-section">
           <label>Work Code</label>
-          <input type="text" id="fc-lt-workcode" placeholder="Enter work code (e.g., CREOL)" autocomplete="off">
+          <div class="fc-lt-input-wrapper">
+            <input type="text" id="fc-lt-workcode" placeholder="Enter work code (e.g., CREOL)" autocomplete="off">
+            <div class="fc-lt-suggestions hidden" id="fc-lt-workcode-suggestions"></div>
+          </div>
           <button id="fc-lt-submit-workcode" class="fc-lt-btn primary">Submit</button>
         </div>
         <div class="fc-lt-section hidden" id="fc-lt-badge-section">
@@ -175,6 +245,56 @@
       }
       .fc-lt-minimize:hover {
         color: #fff;
+      }
+      .fc-lt-toggle {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 3px;
+        border: none;
+        cursor: pointer;
+        margin-right: 4px;
+      }
+      .fc-lt-toggle.on {
+        background: #27ae60;
+        color: #fff;
+      }
+      .fc-lt-toggle.off {
+        background: #e74c3c;
+        color: #fff;
+      }
+      #fc-labor-tracking-panel.disabled {
+        opacity: 0.6;
+      }
+      #fc-labor-tracking-panel.disabled .fc-lt-body {
+        pointer-events: none;
+      }
+      .fc-lt-input-wrapper {
+        position: relative;
+      }
+      .fc-lt-suggestions {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: #1a1a2e;
+        border: 1px solid #333;
+        border-top: none;
+        border-radius: 0 0 4px 4px;
+        z-index: 10;
+        max-height: 150px;
+        overflow-y: auto;
+      }
+      .fc-lt-suggestions.hidden {
+        display: none;
+      }
+      .fc-lt-suggestion {
+        padding: 8px 10px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .fc-lt-suggestion:hover {
+        background: #16213e;
       }
       .fc-lt-body {
         padding: 12px;
@@ -372,7 +492,9 @@
 
   function setupPanelEvents(panel) {
     const minimizeBtn = panel.querySelector('.fc-lt-minimize');
+    const toggleBtn = document.getElementById('fc-lt-toggle');
     const workCodeInput = document.getElementById('fc-lt-workcode');
+    const suggestionsDiv = document.getElementById('fc-lt-workcode-suggestions');
     const badgeInput = document.getElementById('fc-lt-badge');
     const submitWorkCodeBtn = document.getElementById('fc-lt-submit-workcode');
     const submitBadgeBtn = document.getElementById('fc-lt-submit-badge');
@@ -385,24 +507,53 @@
       minimizeBtn.textContent = panel.classList.contains('minimized') ? '+' : '_';
     });
 
+    // Extension ON/OFF toggle
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleExtension();
+    });
+
+    // Work code input with suggestions
+    workCodeInput.addEventListener('input', () => {
+      const value = workCodeInput.value.trim();
+      const suggestions = getWorkCodeSuggestions(value);
+      if (suggestions.length > 0 && value.length > 0) {
+        suggestionsDiv.textContent = '';
+        suggestions.forEach(code => {
+          const div = document.createElement('div');
+          div.className = 'fc-lt-suggestion';
+          div.textContent = code;
+          div.addEventListener('click', () => {
+            workCodeInput.value = code;
+            suggestionsDiv.classList.add('hidden');
+            workCodeInput.focus();
+          });
+          suggestionsDiv.appendChild(div);
+        });
+        suggestionsDiv.classList.remove('hidden');
+      } else {
+        suggestionsDiv.classList.add('hidden');
+      }
+    });
+
+    workCodeInput.addEventListener('blur', () => {
+      // Delay hiding to allow click on suggestion
+      setTimeout(() => suggestionsDiv.classList.add('hidden'), 200);
+    });
+
     // Work code submission
     submitWorkCodeBtn.addEventListener('click', () => submitWorkCode());
     workCodeInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') submitWorkCode();
-    });
-
-    // Mark extension as engaged when user focuses on our badge input
-    badgeInput.addEventListener('focus', () => {
-      extensionEngaged = true;
-      console.log('[FC Labor Tracking] Extension engaged (panel focus)');
+      if (e.key === 'Enter') {
+        suggestionsDiv.classList.add('hidden');
+        submitWorkCode();
+      }
     });
 
     // Badge input - lookup on change (with shorter debounce for scanner)
-    // Scanners type fast and send Enter at the end, so we need to be quick
     badgeInput.addEventListener('input', debounce(async () => {
       const badgeId = badgeInput.value.trim();
-      if (badgeId.length >= 3) {
-        extensionEngaged = true; // Mark engaged when typing in panel
+      if (badgeId.length >= 3 && extensionEnabled) {
         // Start lookup and track it
         lookupInProgress = true;
         lookupPromise = lookupAssociate(badgeId).finally(() => {
@@ -416,13 +567,9 @@
     }, 150)); // Reduced debounce time for faster scanner response
 
     // Badge submission - wait for lookup if in progress
-    submitBadgeBtn.addEventListener('click', () => {
-      extensionEngaged = true;
-      submitBadge();
-    });
+    submitBadgeBtn.addEventListener('click', () => submitBadge());
     badgeInput.addEventListener('keypress', async (e) => {
       if (e.key === 'Enter') {
-        extensionEngaged = true;
         e.preventDefault(); // Prevent default form submission
         await submitBadge();
       }
@@ -482,6 +629,7 @@
       console.log('[FC Labor Tracking] Work code stored for MPV check:', workCode);
 
       await handleWorkCodeInput(workCode);
+      addRecentWorkCode(workCode); // Save for suggestions
       showPanelMessage('Work code submitted!', 'success');
 
       // The page will navigate, but if it doesn't, switch to badge mode
@@ -553,7 +701,6 @@
       input.value = '';
       hideAssociateInfo();
       currentMpvCheckResult = null; // Reset for next badge
-      extensionEngaged = false; // Reset engagement for next badge
 
       // Ready for next badge
       setTimeout(() => {
@@ -565,7 +712,7 @@
     }
   }
 
-  // Watch native form for MPV check - only intercept when extension is engaged
+  // Watch native form for MPV check - intercept when extension is enabled
   function setupNativeFormWatching() {
     console.log('[FC Labor Tracking] Setting up native form watching on badge page');
 
@@ -581,26 +728,36 @@
     const nativeForm = nativeBadgeInput.closest('form');
     console.log('[FC Labor Tracking] Found native badge input and form:', !!nativeForm);
 
-    // Sync native input to panel (for display purposes only, don't auto-engage)
-    nativeBadgeInput.addEventListener('input', () => {
+    // Sync native input to panel and start lookup when extension is enabled
+    nativeBadgeInput.addEventListener('input', debounce(async () => {
       const badgeId = nativeBadgeInput.value.trim();
       // Sync to our panel input for display
       const panelInput = document.getElementById('fc-lt-badge');
       if (panelInput && panelInput.value !== badgeId) {
         panelInput.value = badgeId;
       }
-    });
 
-    // Only intercept Enter if extension is engaged
+      // If extension enabled and badge is long enough, start lookup immediately
+      if (extensionEnabled && badgeId.length >= 3) {
+        console.log('[FC Labor Tracking] Native input - starting lookup for:', badgeId);
+        lookupInProgress = true;
+        lookupPromise = lookupAssociate(badgeId).finally(() => {
+          lookupInProgress = false;
+        });
+      }
+    }, 100)); // Short debounce to catch scanner input
+
+    // ALWAYS intercept Enter when extension is enabled - block until lookup done
     nativeBadgeInput.addEventListener('keydown', async (e) => {
       if (e.key === 'Enter') {
-        // Only intercept if extension has been actively used
-        if (!extensionEngaged) {
-          console.log('[FC Labor Tracking] Enter on native input - extension not engaged, allowing native submit');
-          return; // Let native form submit
+        // If extension is disabled, let native submit through
+        if (!extensionEnabled) {
+          console.log('[FC Labor Tracking] Enter - extension DISABLED, allowing native submit');
+          return;
         }
 
-        console.log('[FC Labor Tracking] Enter pressed on native input - extension engaged, intercepting');
+        // Extension is enabled - BLOCK and wait for lookup
+        console.log('[FC Labor Tracking] Enter pressed - extension ENABLED, intercepting');
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -615,15 +772,15 @@
       }
     }, true); // Use capture phase
 
-    // Only intercept form submit if extension is engaged
+    // ALWAYS intercept form submit when extension is enabled
     if (nativeForm) {
       nativeForm.addEventListener('submit', async (e) => {
-        if (!extensionEngaged) {
-          console.log('[FC Labor Tracking] Form submit - extension not engaged, allowing native submit');
-          return; // Let native form submit
+        if (!extensionEnabled) {
+          console.log('[FC Labor Tracking] Form submit - extension DISABLED, allowing native');
+          return;
         }
 
-        console.log('[FC Labor Tracking] Form submit intercepted - extension engaged');
+        console.log('[FC Labor Tracking] Form submit intercepted - extension ENABLED');
         e.preventDefault();
         e.stopPropagation();
 
@@ -636,19 +793,19 @@
       }, true);
     }
 
-    // Only intercept Done button if extension is engaged
+    // ALWAYS intercept Done button when extension is enabled
     const doneButton = document.querySelector('input[type="submit"][value="Done"]') ||
                        document.querySelector('input[type="submit"]');
     if (doneButton) {
       doneButton.addEventListener('click', async (e) => {
         const badgeId = nativeBadgeInput.value.trim();
 
-        if (!extensionEngaged || badgeId.length === 0) {
-          console.log('[FC Labor Tracking] Done button - extension not engaged or no badge, allowing native');
-          return; // Let native click through
+        if (!extensionEnabled || badgeId.length === 0) {
+          console.log('[FC Labor Tracking] Done button - extension disabled or no badge, allowing native');
+          return;
         }
 
-        console.log('[FC Labor Tracking] Done button clicked with badge - extension engaged, intercepting');
+        console.log('[FC Labor Tracking] Done button clicked - extension ENABLED, intercepting');
         e.preventDefault();
         e.stopPropagation();
 
