@@ -551,126 +551,146 @@
 
   // ============== FETCH AAs ON RESTRICTED PATHS ==============
 
+  // Process IDs for C-Returns and V-Returns
+  const PROCESS_IDS = {
+    'C-Returns Support': '1003058',
+    'V-Returns': '1003059'
+  };
+
   async function fetchPathAAs(paths) {
     log(`Fetching AAs on paths: ${paths.join(', ')}`);
 
-    // Build URL for process path rollup
     const shiftRange = getShiftDateRange();
-    const params = new URLSearchParams({
-      warehouseId: CONFIG.WAREHOUSE_ID,
-      startDateDay: shiftRange.endDate,
-      maxIntradayDays: '1',
-      spanType: 'Intraday',
-      startDateIntraday: shiftRange.startDate,
-      startHourIntraday: String(shiftRange.startHour),
-      startMinuteIntraday: '0',
-      endDateIntraday: shiftRange.endDate,
-      endHourIntraday: String(shiftRange.endHour),
-      endMinuteIntraday: '0'
-    });
-
-    const rollupUrl = `https://fclm-portal.amazon.com/reports/processPathRollup?${params.toString()}`;
-
-    try {
-      // Fetch the page content
-      const response = await fetch(rollupUrl, { credentials: 'include' });
-      const html = await response.text();
-
-      // Parse the HTML
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-
-      const result = {};
-      for (const path of paths) {
-        result[path] = [];
-      }
-
-      // Find the table with process path data
-      // Look for tables that contain our path names
-      const tables = doc.querySelectorAll('table');
-
-      for (const table of tables) {
-        const rows = table.querySelectorAll('tr');
-
-        for (const row of rows) {
-          const cells = row.querySelectorAll('td');
-          if (cells.length < 3) continue;
-
-          // Look for path name in the row
-          const rowText = row.textContent;
-
-          for (const path of paths) {
-            if (rowText.includes(path)) {
-              // Try to extract AA information
-              // The structure varies, but typically has: Path Name | Employee | Time
-              const links = row.querySelectorAll('a');
-
-              for (const link of links) {
-                const href = link.getAttribute('href') || '';
-                if (href.includes('employeeId=')) {
-                  const badgeMatch = href.match(/employeeId=(\d+)/);
-                  if (badgeMatch) {
-                    const badgeId = badgeMatch[1];
-                    const name = link.textContent.trim();
-
-                    // Try to find time in nearby cells
-                    let minutes = 0;
-                    for (const cell of cells) {
-                      const cellText = cell.textContent.trim();
-                      // Look for time format like "2:30" or "150:00"
-                      const timeMatch = cellText.match(/^(\d+):(\d+)$/);
-                      if (timeMatch) {
-                        minutes = parseInt(timeMatch[1]) + parseInt(timeMatch[2]) / 60;
-                      }
-                    }
-
-                    // Add to results if not already there
-                    if (!result[path].find(aa => aa.badgeId === badgeId)) {
-                      result[path].push({
-                        badgeId,
-                        name,
-                        minutes
-                      });
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Also try to find data in a different table structure
-      // Look for expandable sections with path names
-      const pathSections = doc.querySelectorAll('.expandable-row, [data-path], .path-row');
-      for (const section of pathSections) {
-        const sectionText = section.textContent;
-        for (const path of paths) {
-          if (sectionText.includes(path)) {
-            // Found a section for this path - try to extract AAs
-            const employeeLinks = section.querySelectorAll('a[href*="employeeId"]');
-            for (const link of employeeLinks) {
-              const href = link.getAttribute('href') || '';
-              const badgeMatch = href.match(/employeeId=(\d+)/);
-              if (badgeMatch) {
-                const badgeId = badgeMatch[1];
-                const name = link.textContent.trim();
-                if (!result[path].find(aa => aa.badgeId === badgeId)) {
-                  result[path].push({ badgeId, name, minutes: 0 });
-                }
-              }
-            }
-          }
-        }
-      }
-
-      log(`Found AAs: ${JSON.stringify(result)}`, 'success');
-      return result;
-
-    } catch (error) {
-      log(`Error fetching path AAs: ${error.message}`, 'error');
-      throw error;
+    const result = {};
+    for (const path of paths) {
+      result[path] = [];
     }
+
+    // Fetch from both C-Returns and V-Returns processes
+    for (const [processName, processId] of Object.entries(PROCESS_IDS)) {
+      try {
+        const params = new URLSearchParams({
+          reportFormat: 'HTML',
+          warehouseId: CONFIG.WAREHOUSE_ID,
+          processId: processId,
+          maxIntradayDays: '1',
+          spanType: 'Intraday',
+          startDateIntraday: shiftRange.startDate,
+          startHourIntraday: String(shiftRange.startHour),
+          startMinuteIntraday: '0',
+          endDateIntraday: shiftRange.endDate,
+          endHourIntraday: String(shiftRange.endHour),
+          endMinuteIntraday: '0'
+        });
+
+        const rollupUrl = `https://fclm-portal.amazon.com/reports/functionRollup?${params.toString()}`;
+        log(`Fetching ${processName}: ${rollupUrl}`);
+
+        const response = await fetch(rollupUrl, { credentials: 'include' });
+        const html = await response.text();
+
+        // Parse the HTML
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+
+        // Find all tables - each path has its own table with a header
+        // The structure is: header row with path name, then column headers, then data rows
+        const allElements = doc.body.querySelectorAll('*');
+        let currentPath = null;
+
+        for (const elem of allElements) {
+          const text = elem.textContent.trim();
+
+          // Check if this element is a path header
+          // Headers look like: "C-Returns_StowSweep [1599235343587]" or "Vreturns WaterSpider [ID]"
+          for (const path of paths) {
+            if (text.includes(path) && (text.includes('[') || elem.tagName === 'B' || elem.tagName === 'STRONG')) {
+              currentPath = path;
+              log(`Found path section: ${path}`);
+              break;
+            }
+          }
+        }
+
+        // Better approach: find tables and look for path names in table headers/caption
+        const tables = doc.querySelectorAll('table');
+
+        for (const table of tables) {
+          const tableText = table.textContent;
+
+          // Check which path this table belongs to
+          let tablePath = null;
+          for (const path of paths) {
+            if (tableText.includes(path)) {
+              tablePath = path;
+              break;
+            }
+          }
+
+          if (!tablePath) continue;
+
+          log(`Parsing table for path: ${tablePath}`);
+
+          // Find data rows (skip header rows)
+          const rows = table.querySelectorAll('tr');
+
+          for (const row of rows) {
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 5) continue;
+
+            // Skip header rows and total rows
+            const firstCellText = cells[0]?.textContent?.trim() || '';
+            if (firstCellText === 'Type' || firstCellText === 'Total' || firstCellText === '') continue;
+
+            // Structure: Type | ID | Name | Manager | ... | Total
+            // Type is usually "AMZN"
+            if (firstCellText !== 'AMZN') continue;
+
+            // Get badge ID from second cell (may be a link)
+            const idCell = cells[1];
+            const idLink = idCell?.querySelector('a');
+            const badgeId = idLink ? idLink.textContent.trim() : idCell?.textContent?.trim();
+
+            if (!badgeId || !/^\d+$/.test(badgeId)) continue;
+
+            // Get name from third cell
+            const nameCell = cells[2];
+            const nameLink = nameCell?.querySelector('a');
+            const name = nameLink ? nameLink.textContent.trim() : nameCell?.textContent?.trim() || '';
+
+            // Get total hours from last cell
+            const totalCell = cells[cells.length - 1];
+            const totalText = totalCell?.textContent?.trim() || '0';
+            const hours = parseFloat(totalText) || 0;
+            const minutes = hours * 60;
+
+            // Add to results if not already there
+            if (!result[tablePath].find(aa => aa.badgeId === badgeId)) {
+              result[tablePath].push({
+                badgeId,
+                name,
+                minutes,
+                hours
+              });
+              log(`Found AA: ${name} (${badgeId}) - ${hours}h on ${tablePath}`);
+            }
+          }
+        }
+
+      } catch (error) {
+        log(`Error fetching ${processName}: ${error.message}`, 'error');
+      }
+    }
+
+    // Sort each path by hours descending
+    for (const path of paths) {
+      result[path].sort((a, b) => b.minutes - a.minutes);
+    }
+
+    const totalAAs = Object.values(result).reduce((sum, arr) => sum + arr.length, 0);
+    log(`Found ${totalAAs} total AAs on restricted paths`, 'success');
+
+    return result;
   }
 
   // ============== UI INDICATOR ==============

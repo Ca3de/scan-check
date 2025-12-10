@@ -1102,10 +1102,17 @@
 
         const time = document.createElement('span');
         time.className = 'fc-lt-path-aa-time';
-        if (aa.minutes >= 240) { // 4 hours = warning
+        // Warning if over 4 hours (240 minutes)
+        const totalMinutes = aa.minutes || (aa.hours * 60) || 0;
+        if (totalMinutes >= 240) {
           time.classList.add('warning');
         }
-        time.textContent = formatMinutes(aa.minutes);
+        // Display hours directly if available
+        if (aa.hours !== undefined) {
+          time.textContent = aa.hours.toFixed(2) + 'h';
+        } else {
+          time.textContent = formatMinutes(totalMinutes);
+        }
 
         row.appendChild(name);
         row.appendChild(time);
