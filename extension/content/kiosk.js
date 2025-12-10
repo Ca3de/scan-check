@@ -1419,9 +1419,11 @@
       const currentWorkCode = workCodeResponse?.workCode || null;
       console.log('[FC Labor Tracking] Current work code for MPV check:', currentWorkCode);
 
-      // FAST PATH: Try quick MPV check using cached path data first
-      // This avoids slow navigation to timeDetails page for restricted paths
-      const quickResult = await quickMpvCheckFromCache(badgeId, currentWorkCode);
+      // NOTE: Quick cache check is DISABLED because FCLM stores employee IDs
+      // (e.g., 111983827) but scanners use badge IDs (e.g., 13525472).
+      // These don't match, so we must use full timeDetails lookup.
+      // TODO: If we can get a badge-to-employeeID mapping, re-enable this.
+      const quickResult = null; // await quickMpvCheckFromCache(badgeId, currentWorkCode);
       if (quickResult) {
         console.log('[FC Labor Tracking] Quick MPV result from cache:', quickResult.hasMpvRisk ? 'BLOCKED' : 'OK');
         currentMpvCheckResult = quickResult;
