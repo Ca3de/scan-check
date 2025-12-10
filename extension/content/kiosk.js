@@ -623,6 +623,32 @@
 
     // Load cached path data on init
     loadCachedPathAAs();
+
+    // Start auto-refresh timer for restricted paths (every 15 minutes)
+    startPathAutoRefresh();
+  }
+
+  function startPathAutoRefresh() {
+    // Clear any existing timer
+    if (pathRefreshTimer) {
+      clearInterval(pathRefreshTimer);
+    }
+
+    // Auto-refresh every 15 minutes
+    pathRefreshTimer = setInterval(() => {
+      console.log('[FC Labor Tracking] Auto-refreshing restricted path AAs...');
+      refreshPathAAs();
+    }, PATH_REFRESH_INTERVAL);
+
+    console.log('[FC Labor Tracking] Path auto-refresh started (every 15 minutes)');
+
+    // Also do an initial refresh if cache is old or empty
+    browser.storage.local.get(['pathAAsUpdated']).then(data => {
+      if (!data.pathAAsUpdated || (Date.now() - data.pathAAsUpdated > PATH_REFRESH_INTERVAL)) {
+        console.log('[FC Labor Tracking] Cache stale, doing initial refresh...');
+        setTimeout(refreshPathAAs, 2000); // Slight delay to not overwhelm on load
+      }
+    });
   }
 
   function setupPanelEvents(panel) {
@@ -1089,11 +1115,7 @@
             updatedDiv.textContent = 'Updated: ' + new Date(data.pathAAsUpdated).toLocaleTimeString();
           }
         }
-
-        // Auto-refresh if data is older than 15 minutes
-        if (Date.now() - data.pathAAsUpdated > PATH_REFRESH_INTERVAL) {
-          setTimeout(refreshPathAAs, 2000); // Slight delay to not overwhelm on load
-        }
+        // Note: Auto-refresh is handled by startPathAutoRefresh()
       }
     } catch (e) {
       console.log('[FC Labor Tracking] Could not load cached path AAs:', e);
