@@ -1,32 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <!-- Background -->
-  <rect width="128" height="128" rx="20" fill="#232f3e"/>
+  <!-- Background - rounded square -->
+  <rect width="128" height="128" rx="24" fill="#232f3e"/>
 
-  <!-- Badge/ID Card -->
-  <rect x="20" y="28" width="60" height="76" rx="6" fill="#fff"/>
-  <rect x="28" y="36" width="44" height="28" rx="3" fill="#ff9900"/>
+  <!-- Shield shape -->
+  <path d="M64 16 L104 32 L104 64 Q104 96 64 112 Q24 96 24 64 L24 32 Z"
+        fill="#ff9900" stroke="#fff" stroke-width="2"/>
 
-  <!-- Person silhouette on badge -->
-  <circle cx="50" cy="46" r="8" fill="#232f3e"/>
-  <ellipse cx="50" cy="60" rx="12" ry="6" fill="#232f3e"/>
+  <!-- Inner shield -->
+  <path d="M64 26 L94 39 L94 62 Q94 88 64 102 Q34 88 34 62 L34 39 Z"
+        fill="#232f3e"/>
 
-  <!-- Badge lines -->
-  <rect x="28" y="70" width="36" height="4" rx="2" fill="#ccc"/>
-  <rect x="28" y="78" width="28" height="4" rx="2" fill="#ccc"/>
-  <rect x="28" y="86" width="20" height="4" rx="2" fill="#ccc"/>
+  <!-- Checkmark -->
+  <path d="M48 62 L58 74 L80 48"
+        fill="none" stroke="#00d26a" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- Clock -->
-  <circle cx="88" cy="72" r="28" fill="#ff9900"/>
-  <circle cx="88" cy="72" r="23" fill="#fff"/>
-
-  <!-- Clock hands -->
-  <line x1="88" y1="72" x2="88" y2="56" stroke="#232f3e" stroke-width="3" stroke-linecap="round"/>
-  <line x1="88" y1="72" x2="100" y2="72" stroke="#232f3e" stroke-width="3" stroke-linecap="round"/>
-  <circle cx="88" cy="72" r="3" fill="#232f3e"/>
-
-  <!-- Clock tick marks -->
-  <line x1="88" y1="52" x2="88" y2="55" stroke="#232f3e" stroke-width="2"/>
-  <line x1="88" y1="89" x2="88" y2="92" stroke="#232f3e" stroke-width="2"/>
-  <line x1="68" y1="72" x2="71" y2="72" stroke="#232f3e" stroke-width="2"/>
-  <line x1="105" y1="72" x2="108" y2="72" stroke="#232f3e" stroke-width="2"/>
+  <!-- Scanner lines at bottom -->
+  <rect x="44" y="82" width="40" height="3" rx="1" fill="#ff9900"/>
+  <rect x="50" y="88" width="28" height="3" rx="1" fill="#ff9900" opacity="0.7"/>
+  <rect x="56" y="94" width="16" height="3" rx="1" fill="#ff9900" opacity="0.5"/>
 </svg>
