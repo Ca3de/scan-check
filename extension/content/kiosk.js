@@ -41,6 +41,13 @@
   const RESTRICTED_PATHS = ['C-Returns_StowSweep', 'Vreturns WaterSpider', 'C-Returns_EndofLine'];
   const PATH_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
+  // Prob Solve monitoring configuration
+  const PROB_SOLVE_MAX_MINUTES = 120; // 2 hours max on Prob Solve
+  const PROB_SOLVE_CHECK_INTERVAL = 10 * 60 * 1000; // Check every 10 minutes
+  let probSolveMonitorTimer = null;
+  let probSolveMonitorEnabled = true;
+  let isProcessingProbSolve = false; // Prevent concurrent processing
+
   // Load extension state and recent work codes from storage
   async function loadExtensionState() {
     try {
@@ -1307,6 +1314,230 @@
       return `${hours}h ${mins}m`;
     }
     return `${mins}m`;
+  }
+
+  // ============== PROB SOLVE MONITORING ==============
+
+  // Start Prob Solve monitoring (check every 10 minutes)
+  function startProbSolveMonitor() {
+    if (probSolveMonitorTimer) {
+      clearInterval(probSolveMonitorTimer);
+    }
+
+    console.log('[FC Labor Tracking] Starting Prob Solve monitor (every 10 minutes)');
+
+    // Run check every 10 minutes
+    probSolveMonitorTimer = setInterval(() => {
+      if (probSolveMonitorEnabled && !isProcessingProbSolve) {
+        console.log('[FC Labor Tracking] Running scheduled Prob Solve check...');
+        checkAndStopProbSolveAAs();
+      }
+    }, PROB_SOLVE_CHECK_INTERVAL);
+
+    // Also do an initial check after 30 seconds
+    setTimeout(() => {
+      if (probSolveMonitorEnabled && !isProcessingProbSolve) {
+        console.log('[FC Labor Tracking] Running initial Prob Solve check...');
+        checkAndStopProbSolveAAs();
+      }
+    }, 30000);
+  }
+
+  // Main function to check Prob Solve AAs and auto-stop those over 2 hours
+  async function checkAndStopProbSolveAAs() {
+    if (isProcessingProbSolve) {
+      console.log('[FC Labor Tracking] Prob Solve check already in progress, skipping...');
+      return;
+    }
+
+    isProcessingProbSolve = true;
+    console.log('[FC Labor Tracking] Checking Prob Solve AAs...');
+
+    try {
+      // Fetch AAs in V-Returns Prob Solve
+      const response = await browser.runtime.sendMessage({
+        action: 'fetchProbSolveAAs'
+      });
+
+      if (!response.success || !response.data) {
+        console.log('[FC Labor Tracking] Failed to fetch Prob Solve AAs:', response.error);
+        return;
+      }
+
+      const probSolveAAs = response.data;
+      console.log(`[FC Labor Tracking] Found ${probSolveAAs.length} AAs in Prob Solve`);
+
+      // Check each AA with 2+ hours total
+      for (const aa of probSolveAAs) {
+        if (aa.minutes >= PROB_SOLVE_MAX_MINUTES) {
+          console.log(`[FC Labor Tracking] AA ${aa.name} (${aa.employeeId}) has ${aa.minutes.toFixed(0)} mins on Prob Solve - checking current activity...`);
+
+          // Check if they're CURRENTLY on Prob Solve path
+          const activityResponse = await browser.runtime.sendMessage({
+            action: 'checkAACurrentActivity',
+            employeeId: aa.employeeId
+          });
+
+          if (activityResponse.success && activityResponse.data) {
+            const activity = activityResponse.data;
+
+            if (activity.isCurrentlyOnProbSolve) {
+              console.log(`[FC Labor Tracking] ⚠️ AA ${aa.name} is CURRENTLY on Prob Solve with ${activity.totalProbSolveMinutes.toFixed(0)} mins - AUTO-STOPPING!`);
+
+              // Show notification
+              showProbSolveAlert(aa.name, aa.employeeId, activity.totalProbSolveMinutes);
+
+              // Auto-stop: MSTOP then ISTOP
+              await autoStopAA(aa.employeeId, aa.name);
+
+              // Small delay between AAs to not overwhelm the system
+              await sleep(2000);
+            } else {
+              console.log(`[FC Labor Tracking] AA ${aa.name} has ${aa.minutes.toFixed(0)} mins but NOT currently on Prob Solve (current: ${activity.currentActivity || 'none'})`);
+            }
+          }
+        }
+      }
+
+      console.log('[FC Labor Tracking] Prob Solve check complete');
+
+    } catch (error) {
+      console.log('[FC Labor Tracking] Error in Prob Solve check:', error);
+    } finally {
+      isProcessingProbSolve = false;
+    }
+  }
+
+  // Auto-stop an AA: submit MSTOP then ISTOP
+  async function autoStopAA(badgeId, name) {
+    console.log(`[FC Labor Tracking] Auto-stopping AA ${name} (${badgeId})...`);
+
+    // We need to be on the work code page to submit
+    if (!isWorkCodePage && !isBadgePage) {
+      console.log('[FC Labor Tracking] Not on kiosk page, cannot auto-stop');
+      return false;
+    }
+
+    try {
+      // Step 1: Submit MSTOP with badge ID
+      console.log(`[FC Labor Tracking] Step 1: Submitting MSTOP for ${badgeId}...`);
+      await submitLaborCode('MSTOP', badgeId);
+      showPanelMessage(`MSTOP submitted for ${name}`, 'info');
+
+      // Wait for the form to complete
+      await sleep(3000);
+
+      // Step 2: Go back to work code page (if needed)
+      // The form submission should return us to work code page automatically
+      // But we may need to wait for the page to reload
+
+      // Step 3: Submit ISTOP with badge ID
+      console.log(`[FC Labor Tracking] Step 2: Submitting ISTOP for ${badgeId}...`);
+      await submitLaborCode('ISTOP', badgeId);
+      showPanelMessage(`ISTOP submitted for ${name}`, 'success');
+
+      console.log(`[FC Labor Tracking] ✓ Auto-stop complete for ${name} (${badgeId})`);
+      return true;
+
+    } catch (error) {
+      console.log(`[FC Labor Tracking] Error auto-stopping AA: ${error.message}`);
+      showPanelMessage(`Error stopping ${name}: ${error.message}`, 'error');
+      return false;
+    }
+  }
+
+  // Submit a labor code with badge ID (used for auto-stop)
+  async function submitLaborCode(workCode, badgeId) {
+    console.log(`[FC Labor Tracking] Submitting labor code: ${workCode} for badge: ${badgeId}`);
+
+    // If we're on work code page, submit work code first
+    if (isWorkCodePage) {
+      const calmCodeInput = document.getElementById('calmCode') ||
+                            document.querySelector('input[name="calmCode"]');
+
+      if (calmCodeInput) {
+        calmCodeInput.focus();
+        calmCodeInput.value = workCode;
+        calmCodeInput.dispatchEvent(new Event('input', { bubbles: true }));
+        calmCodeInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+        await sleep(100);
+
+        // Submit the form
+        const form = calmCodeInput.closest('form');
+        if (form) {
+          form.submit();
+        }
+
+        // Wait for page navigation to badge page
+        await sleep(2000);
+      }
+    }
+
+    // Now we should be on badge page (or already were)
+    // Submit the badge ID
+    const badgeInput = document.getElementById('trackingBadgeId') ||
+                       document.querySelector('input[name="trackingBadgeId"]');
+
+    if (badgeInput) {
+      // Set the badge value
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeInputValueSetter.call(badgeInput, badgeId);
+      badgeInput.dispatchEvent(new Event('input', { bubbles: true }));
+      badgeInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+      await sleep(150);
+
+      // Click Done button
+      const submitBtn = document.querySelector('input[type="submit"][value="Done"]') ||
+                        document.querySelector('input[type="submit"]');
+
+      if (submitBtn) {
+        submitBtn.click();
+      } else {
+        // Fallback: submit form directly
+        const form = badgeInput.closest('form');
+        if (form) {
+          form.submit();
+        }
+      }
+
+      // Wait for submission
+      await sleep(1500);
+    }
+  }
+
+  // Show alert for Prob Solve auto-stop
+  function showProbSolveAlert(name, badgeId, minutes) {
+    // Create a floating alert
+    const alert = document.createElement('div');
+    alert.id = 'fc-prob-solve-alert';
+    alert.innerHTML = `
+      <div style="background: #e74c3c; color: #fff; padding: 12px 16px; border-radius: 8px;
+                  box-shadow: 0 4px 20px rgba(0,0,0,0.5); font-family: -apple-system, sans-serif;
+                  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                  z-index: 9999999; text-align: center; min-width: 300px;">
+        <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">⚠️ PROB SOLVE LIMIT</div>
+        <div style="font-size: 14px; margin-bottom: 4px;">${name}</div>
+        <div style="font-size: 12px; color: #ffcccc;">Badge: ${badgeId}</div>
+        <div style="font-size: 14px; margin-top: 8px;">${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m on Prob Solve</div>
+        <div style="font-size: 12px; margin-top: 8px; color: #ffcccc;">Auto-submitting MSTOP + ISTOP...</div>
+      </div>
+    `;
+
+    document.body.appendChild(alert);
+
+    // Remove after 5 seconds
+    setTimeout(() => {
+      alert.remove();
+    }, 5000);
+  }
+
+  // Start Prob Solve monitor when extension loads (only on work code page)
+  if (isWorkCodePage) {
+    setTimeout(() => {
+      startProbSolveMonitor();
+    }, 5000); // Start after 5 seconds to let everything initialize
   }
 
   // ============== FCLM INTEGRATION ==============
