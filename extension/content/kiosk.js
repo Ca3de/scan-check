@@ -1364,11 +1364,44 @@
       }
 
       console.log('[FC Labor Tracking] Found pending auto-stop:', pending);
+      console.log('[FC Labor Tracking] Current page: isWorkCodePage=' + isWorkCodePage + ', isBadgePage=' + isBadgePage);
 
       // Check if it's too old (more than 2 minutes)
-      if (Date.now() - pending.timestamp > 120000) {
-        console.log('[FC Labor Tracking] Pending auto-stop expired, clearing...');
+      const age = Date.now() - pending.timestamp;
+      console.log('[FC Labor Tracking] Pending auto-stop age:', Math.round(age / 1000), 'seconds');
+      if (age > 120000) {
+        console.log('[FC Labor Tracking] Pending auto-stop expired (>2 min), clearing...');
         await browser.storage.local.remove(['pendingAutoStop']);
+        return;
+      }
+
+      // Determine what page this step needs
+      const needsWorkCodePage = pending.step === 'mstop_workcode' || pending.step === 'istop_workcode';
+      const needsBadgePage = pending.step === 'mstop_badge' || pending.step === 'istop_badge';
+
+      // Handle page mismatch - navigate to correct page
+      if (needsWorkCodePage && isBadgePage) {
+        console.log('[FC Labor Tracking] Step needs work code page but on badge page, navigating back...');
+        // Navigate back to work code page
+        const backLink = document.querySelector('a[href*="laborTrackingKiosk"]') ||
+                        document.querySelector('a.back') ||
+                        document.querySelector('input[type="button"][value="Back"]') ||
+                        document.querySelector('button:contains("Back")');
+        if (backLink) {
+          backLink.click();
+          return;
+        }
+        // Alternative: navigate directly
+        const workCodeUrl = window.location.href.replace('/do/laborTrackingKiosk', '/laborTrackingKiosk');
+        console.log('[FC Labor Tracking] Navigating directly to:', workCodeUrl);
+        window.location.href = workCodeUrl;
+        return;
+      }
+
+      if (needsBadgePage && isWorkCodePage) {
+        console.log('[FC Labor Tracking] Step needs badge page but on work code page, waiting for navigation...');
+        // This shouldn't normally happen since work code submission leads to badge page
+        // Just wait - the user or previous form submission should navigate there
         return;
       }
 
@@ -1405,6 +1438,9 @@
         await browser.storage.local.remove(['pendingAutoStop']);
         console.log(`[FC Labor Tracking] ✓ Auto-stop COMPLETE for ${pending.name} (${pending.badgeId})`);
         showPanelMessage(`Auto-stop complete for ${pending.name}`, 'success');
+      }
+      else {
+        console.log('[FC Labor Tracking] No matching condition for step:', pending.step, 'on this page type');
       }
 
     } catch (error) {
