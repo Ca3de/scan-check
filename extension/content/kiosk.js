@@ -1318,6 +1318,13 @@
 
   // ============== PROB SOLVE MONITORING ==============
 
+  // Pending auto-stop state machine steps:
+  // 1. 'mstop_workcode' - Need to submit MSTOP work code (on work code page)
+  // 2. 'mstop_badge' - Need to submit badge ID for MSTOP (on badge page)
+  // 3. 'istop_workcode' - Need to submit ISTOP work code (on work code page)
+  // 4. 'istop_badge' - Need to submit badge ID for ISTOP (on badge page)
+  // 5. null/done - Complete
+
   // Start Prob Solve monitoring (check every 10 minutes)
   function startProbSolveMonitor() {
     if (probSolveMonitorTimer) {
@@ -1343,10 +1350,129 @@
     }, 30000);
   }
 
+  // Check for pending auto-stop on page load and continue processing
+  async function checkPendingAutoStop() {
+    try {
+      const data = await browser.storage.local.get(['pendingAutoStop']);
+      const pending = data.pendingAutoStop;
+
+      if (!pending) {
+        return; // No pending auto-stop
+      }
+
+      console.log('[FC Labor Tracking] Found pending auto-stop:', pending);
+
+      // Check if it's too old (more than 2 minutes)
+      if (Date.now() - pending.timestamp > 120000) {
+        console.log('[FC Labor Tracking] Pending auto-stop expired, clearing...');
+        await browser.storage.local.remove(['pendingAutoStop']);
+        return;
+      }
+
+      // Process based on current step and page
+      if (pending.step === 'mstop_workcode' && isWorkCodePage) {
+        console.log('[FC Labor Tracking] Continuing auto-stop: submitting MSTOP work code...');
+        showProbSolveAlert(pending.name, pending.badgeId, pending.minutes);
+        await submitWorkCodeOnly('MSTOP');
+        // Update to next step
+        await browser.storage.local.set({
+          pendingAutoStop: { ...pending, step: 'mstop_badge', timestamp: Date.now() }
+        });
+      }
+      else if (pending.step === 'mstop_badge' && isBadgePage) {
+        console.log('[FC Labor Tracking] Continuing auto-stop: submitting badge for MSTOP...');
+        await submitBadgeOnly(pending.badgeId);
+        // Update to next step
+        await browser.storage.local.set({
+          pendingAutoStop: { ...pending, step: 'istop_workcode', timestamp: Date.now() }
+        });
+      }
+      else if (pending.step === 'istop_workcode' && isWorkCodePage) {
+        console.log('[FC Labor Tracking] Continuing auto-stop: submitting ISTOP work code...');
+        await submitWorkCodeOnly('ISTOP');
+        // Update to next step
+        await browser.storage.local.set({
+          pendingAutoStop: { ...pending, step: 'istop_badge', timestamp: Date.now() }
+        });
+      }
+      else if (pending.step === 'istop_badge' && isBadgePage) {
+        console.log('[FC Labor Tracking] Continuing auto-stop: submitting badge for ISTOP...');
+        await submitBadgeOnly(pending.badgeId);
+        // Done! Clear pending
+        await browser.storage.local.remove(['pendingAutoStop']);
+        console.log(`[FC Labor Tracking] ✓ Auto-stop COMPLETE for ${pending.name} (${pending.badgeId})`);
+        showPanelMessage(`Auto-stop complete for ${pending.name}`, 'success');
+      }
+
+    } catch (error) {
+      console.log('[FC Labor Tracking] Error processing pending auto-stop:', error);
+    }
+  }
+
+  // Submit work code only (without badge)
+  async function submitWorkCodeOnly(workCode) {
+    const calmCodeInput = document.getElementById('calmCode') ||
+                          document.querySelector('input[name="calmCode"]');
+
+    if (!calmCodeInput) {
+      throw new Error('Work code input not found');
+    }
+
+    calmCodeInput.focus();
+    calmCodeInput.value = workCode;
+    calmCodeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    calmCodeInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+    await sleep(100);
+
+    const form = calmCodeInput.closest('form');
+    if (form) {
+      form.submit();
+    }
+  }
+
+  // Submit badge only (without work code)
+  async function submitBadgeOnly(badgeId) {
+    const badgeInput = document.getElementById('trackingBadgeId') ||
+                       document.querySelector('input[name="trackingBadgeId"]');
+
+    if (!badgeInput) {
+      throw new Error('Badge input not found');
+    }
+
+    // Set the badge value
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    nativeInputValueSetter.call(badgeInput, badgeId);
+    badgeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    badgeInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+    await sleep(150);
+
+    // Click Done button
+    const submitBtn = document.querySelector('input[type="submit"][value="Done"]') ||
+                      document.querySelector('input[type="submit"]');
+
+    if (submitBtn) {
+      submitBtn.click();
+    } else {
+      const form = badgeInput.closest('form');
+      if (form) {
+        form.submit();
+      }
+    }
+  }
+
   // Main function to check Prob Solve AAs and auto-stop those over 2 hours
   async function checkAndStopProbSolveAAs() {
     if (isProcessingProbSolve) {
       console.log('[FC Labor Tracking] Prob Solve check already in progress, skipping...');
+      return;
+    }
+
+    // Don't start new checks if there's a pending auto-stop
+    const pendingData = await browser.storage.local.get(['pendingAutoStop']);
+    if (pendingData.pendingAutoStop) {
+      console.log('[FC Labor Tracking] Pending auto-stop in progress, skipping check...');
       return;
     }
 
@@ -1384,14 +1510,36 @@
             if (activity.isCurrentlyOnProbSolve) {
               console.log(`[FC Labor Tracking] ⚠️ AA ${aa.name} is CURRENTLY on Prob Solve with ${activity.totalProbSolveMinutes.toFixed(0)} mins - AUTO-STOPPING!`);
 
+              // Start auto-stop by saving pending state
+              await browser.storage.local.set({
+                pendingAutoStop: {
+                  badgeId: aa.employeeId,
+                  name: aa.name,
+                  minutes: activity.totalProbSolveMinutes,
+                  step: 'mstop_workcode',
+                  timestamp: Date.now()
+                }
+              });
+
               // Show notification
               showProbSolveAlert(aa.name, aa.employeeId, activity.totalProbSolveMinutes);
 
-              // Auto-stop: MSTOP then ISTOP
-              await autoStopAA(aa.employeeId, aa.name);
+              // If we're on work code page, start immediately
+              if (isWorkCodePage) {
+                await submitWorkCodeOnly('MSTOP');
+                await browser.storage.local.set({
+                  pendingAutoStop: {
+                    badgeId: aa.employeeId,
+                    name: aa.name,
+                    minutes: activity.totalProbSolveMinutes,
+                    step: 'mstop_badge',
+                    timestamp: Date.now()
+                  }
+                });
+              }
 
-              // Small delay between AAs to not overwhelm the system
-              await sleep(2000);
+              // Only process one AA at a time
+              break;
             } else {
               console.log(`[FC Labor Tracking] AA ${aa.name} has ${aa.minutes.toFixed(0)} mins but NOT currently on Prob Solve (current: ${activity.currentActivity || 'none'})`);
             }
@@ -1408,107 +1556,12 @@
     }
   }
 
-  // Auto-stop an AA: submit MSTOP then ISTOP
-  async function autoStopAA(badgeId, name) {
-    console.log(`[FC Labor Tracking] Auto-stopping AA ${name} (${badgeId})...`);
-
-    // We need to be on the work code page to submit
-    if (!isWorkCodePage && !isBadgePage) {
-      console.log('[FC Labor Tracking] Not on kiosk page, cannot auto-stop');
-      return false;
-    }
-
-    try {
-      // Step 1: Submit MSTOP with badge ID
-      console.log(`[FC Labor Tracking] Step 1: Submitting MSTOP for ${badgeId}...`);
-      await submitLaborCode('MSTOP', badgeId);
-      showPanelMessage(`MSTOP submitted for ${name}`, 'info');
-
-      // Wait for the form to complete
-      await sleep(3000);
-
-      // Step 2: Go back to work code page (if needed)
-      // The form submission should return us to work code page automatically
-      // But we may need to wait for the page to reload
-
-      // Step 3: Submit ISTOP with badge ID
-      console.log(`[FC Labor Tracking] Step 2: Submitting ISTOP for ${badgeId}...`);
-      await submitLaborCode('ISTOP', badgeId);
-      showPanelMessage(`ISTOP submitted for ${name}`, 'success');
-
-      console.log(`[FC Labor Tracking] ✓ Auto-stop complete for ${name} (${badgeId})`);
-      return true;
-
-    } catch (error) {
-      console.log(`[FC Labor Tracking] Error auto-stopping AA: ${error.message}`);
-      showPanelMessage(`Error stopping ${name}: ${error.message}`, 'error');
-      return false;
-    }
-  }
-
-  // Submit a labor code with badge ID (used for auto-stop)
-  async function submitLaborCode(workCode, badgeId) {
-    console.log(`[FC Labor Tracking] Submitting labor code: ${workCode} for badge: ${badgeId}`);
-
-    // If we're on work code page, submit work code first
-    if (isWorkCodePage) {
-      const calmCodeInput = document.getElementById('calmCode') ||
-                            document.querySelector('input[name="calmCode"]');
-
-      if (calmCodeInput) {
-        calmCodeInput.focus();
-        calmCodeInput.value = workCode;
-        calmCodeInput.dispatchEvent(new Event('input', { bubbles: true }));
-        calmCodeInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-        await sleep(100);
-
-        // Submit the form
-        const form = calmCodeInput.closest('form');
-        if (form) {
-          form.submit();
-        }
-
-        // Wait for page navigation to badge page
-        await sleep(2000);
-      }
-    }
-
-    // Now we should be on badge page (or already were)
-    // Submit the badge ID
-    const badgeInput = document.getElementById('trackingBadgeId') ||
-                       document.querySelector('input[name="trackingBadgeId"]');
-
-    if (badgeInput) {
-      // Set the badge value
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      nativeInputValueSetter.call(badgeInput, badgeId);
-      badgeInput.dispatchEvent(new Event('input', { bubbles: true }));
-      badgeInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-      await sleep(150);
-
-      // Click Done button
-      const submitBtn = document.querySelector('input[type="submit"][value="Done"]') ||
-                        document.querySelector('input[type="submit"]');
-
-      if (submitBtn) {
-        submitBtn.click();
-      } else {
-        // Fallback: submit form directly
-        const form = badgeInput.closest('form');
-        if (form) {
-          form.submit();
-        }
-      }
-
-      // Wait for submission
-      await sleep(1500);
-    }
-  }
-
   // Show alert for Prob Solve auto-stop
   function showProbSolveAlert(name, badgeId, minutes) {
+    // Remove existing alert if any
+    const existing = document.getElementById('fc-prob-solve-alert');
+    if (existing) existing.remove();
+
     // Create a floating alert
     const alert = document.createElement('div');
     alert.id = 'fc-prob-solve-alert';
@@ -1532,6 +1585,11 @@
       alert.remove();
     }, 5000);
   }
+
+  // Check for pending auto-stop on page load
+  setTimeout(() => {
+    checkPendingAutoStop();
+  }, 1000);
 
   // Start Prob Solve monitor when extension loads (only on work code page)
   if (isWorkCodePage) {
