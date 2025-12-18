@@ -1332,22 +1332,25 @@
     }
 
     console.log('[FC Labor Tracking] Starting Prob Solve monitor (every 10 minutes)');
+    console.log(`[FC Labor Tracking] Current page: ${isWorkCodePage ? 'Work Code' : 'Badge'}`);
 
-    // Run check every 10 minutes
+    // Run check every 10 minutes (only on work code page)
     probSolveMonitorTimer = setInterval(() => {
-      if (probSolveMonitorEnabled && !isProcessingProbSolve) {
+      if (probSolveMonitorEnabled && !isProcessingProbSolve && isWorkCodePage) {
         console.log('[FC Labor Tracking] Running scheduled Prob Solve check...');
         checkAndStopProbSolveAAs();
       }
     }, PROB_SOLVE_CHECK_INTERVAL);
 
-    // Also do an initial check after 30 seconds
-    setTimeout(() => {
-      if (probSolveMonitorEnabled && !isProcessingProbSolve) {
-        console.log('[FC Labor Tracking] Running initial Prob Solve check...');
-        checkAndStopProbSolveAAs();
-      }
-    }, 30000);
+    // Do an initial check after 5 seconds (only on work code page)
+    if (isWorkCodePage) {
+      setTimeout(() => {
+        if (probSolveMonitorEnabled && !isProcessingProbSolve) {
+          console.log('[FC Labor Tracking] Running initial Prob Solve check...');
+          checkAndStopProbSolveAAs();
+        }
+      }, 5000);
+    }
   }
 
   // Check for pending auto-stop on page load and continue processing
@@ -1464,6 +1467,11 @@
 
   // Main function to check Prob Solve AAs and auto-stop those over 2 hours
   async function checkAndStopProbSolveAAs() {
+    console.log('[FC Labor Tracking] === PROB SOLVE CHECK START ===');
+    console.log(`[FC Labor Tracking] isProcessingProbSolve: ${isProcessingProbSolve}`);
+    console.log(`[FC Labor Tracking] isWorkCodePage: ${isWorkCodePage}`);
+    console.log(`[FC Labor Tracking] PROB_SOLVE_MAX_MINUTES: ${PROB_SOLVE_MAX_MINUTES}`);
+
     if (isProcessingProbSolve) {
       console.log('[FC Labor Tracking] Prob Solve check already in progress, skipping...');
       return;
@@ -1471,27 +1479,32 @@
 
     // Don't start new checks if there's a pending auto-stop
     const pendingData = await browser.storage.local.get(['pendingAutoStop']);
+    console.log('[FC Labor Tracking] Pending auto-stop data:', pendingData.pendingAutoStop);
     if (pendingData.pendingAutoStop) {
       console.log('[FC Labor Tracking] Pending auto-stop in progress, skipping check...');
       return;
     }
 
     isProcessingProbSolve = true;
-    console.log('[FC Labor Tracking] Checking Prob Solve AAs...');
+    console.log('[FC Labor Tracking] Fetching Prob Solve AAs from FCLM...');
 
     try {
       // Fetch AAs in V-Returns Prob Solve
+      console.log('[FC Labor Tracking] Sending fetchProbSolveAAs message to background...');
       const response = await browser.runtime.sendMessage({
         action: 'fetchProbSolveAAs'
       });
 
+      console.log('[FC Labor Tracking] Received response:', response);
+
       if (!response.success || !response.data) {
-        console.log('[FC Labor Tracking] Failed to fetch Prob Solve AAs:', response.error);
+        console.log('[FC Labor Tracking] Failed to fetch Prob Solve AAs:', response.error || 'No data');
         return;
       }
 
       const probSolveAAs = response.data;
       console.log(`[FC Labor Tracking] Found ${probSolveAAs.length} AAs in Prob Solve`);
+      console.log('[FC Labor Tracking] AAs:', probSolveAAs.map(aa => `${aa.name} (${aa.employeeId}) - ${aa.hours}h`));
 
       // Check each AA with 2+ hours total
       for (const aa of probSolveAAs) {
@@ -1591,12 +1604,11 @@
     checkPendingAutoStop();
   }, 1000);
 
-  // Start Prob Solve monitor when extension loads (only on work code page)
-  if (isWorkCodePage) {
-    setTimeout(() => {
-      startProbSolveMonitor();
-    }, 5000); // Start after 5 seconds to let everything initialize
-  }
+  // Start Prob Solve monitor on both work code and badge pages
+  setTimeout(() => {
+    console.log('[FC Labor Tracking] Initializing Prob Solve monitor...');
+    startProbSolveMonitor();
+  }, 3000); // Start after 3 seconds
 
   // ============== FCLM INTEGRATION ==============
 
