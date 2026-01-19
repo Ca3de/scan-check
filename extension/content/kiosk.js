@@ -1595,7 +1595,7 @@
     'C-Returns_StowSweep': ['STWSWP', 'STOWSWEEP', 'SWEEP', 'CRESW', 'STOW_SWEEP', 'STOWSW', 'STSW'],
     'C-Returns_EndofLine': ['CREOL', 'EOL', 'ENDOFLINE', 'END_OF_LINE', 'ENDLINE'],
     'Vreturns WaterSpider': ['VRWS', 'VRETWS', 'VRWATER'],
-    'Water Spider': ['WHDWTSP', 'CRSDCNTF', 'WATERSPIDER', 'WHDWS', 'CRETWS', 'CRETSWS']
+    'Water Spider': ['WHDWTSP', 'CRSDCNTF']
   };
 
   // Max time allowed on a restricted path (4 hours 30 minutes in minutes)
@@ -1644,7 +1644,8 @@
       if (pathTitle.includes('EndofLine') && (normalizedTitle.includes('endofline') || normalizedTitle.includes('eol'))) {
         return pathTitle;
       }
-      if (pathTitle.includes('WaterSpider') && (normalizedTitle.includes('waterspider') || normalizedTitle.includes('ws'))) {
+      if ((pathTitle.includes('WaterSpider') || pathTitle.includes('Water Spider')) &&
+          (normalizedTitle.includes('waterspider') || normalizedTitle.includes('whdwaterspider'))) {
         return pathTitle;
       }
     }
