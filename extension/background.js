@@ -150,44 +150,6 @@
       }
     }
 
-    // Fetch Prob Solve AAs from FCLM
-    if (message.action === 'fetchProbSolveAAs') {
-      const fclmTab = getAvailableFclmTab();
-      if (fclmTab) {
-        browser.tabs.sendMessage(fclmTab.tabId, {
-          action: 'fetchProbSolveAAs'
-        })
-          .then(response => sendResponse(response))
-          .catch(error => {
-            connectedTabs.fclmTabs = connectedTabs.fclmTabs.filter(t => t.tabId !== fclmTab.tabId);
-            sendResponse({ success: false, error: error.message });
-          });
-        return true; // Async response
-      } else {
-        sendResponse({ success: false, error: 'FCLM tab not connected. Please open fclm-portal.amazon.com' });
-        return false;
-      }
-    }
-
-    // Check AA current activity from FCLM
-    if (message.action === 'checkAACurrentActivity') {
-      const fclmTab = getAvailableFclmTab();
-      if (fclmTab) {
-        browser.tabs.sendMessage(fclmTab.tabId, {
-          action: 'checkAACurrentActivity',
-          employeeId: message.employeeId
-        })
-          .then(response => sendResponse(response))
-          .catch(error => {
-            connectedTabs.fclmTabs = connectedTabs.fclmTabs.filter(t => t.tabId !== fclmTab.tabId);
-            sendResponse({ success: false, error: error.message });
-          });
-        return true; // Async response
-      } else {
-        sendResponse({ success: false, error: 'FCLM tab not connected. Please open fclm-portal.amazon.com' });
-        return false;
-      }
-    }
   });
 
   function handleContentScriptReady(message, sender) {
