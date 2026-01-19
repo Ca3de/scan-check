@@ -1644,8 +1644,10 @@
       if (pathTitle.includes('EndofLine') && (normalizedTitle.includes('endofline') || normalizedTitle.includes('eol'))) {
         return pathTitle;
       }
+      // Water Spider matching - includes Decanter Flow for CRSDCNTF
       if ((pathTitle.includes('WaterSpider') || pathTitle.includes('Water Spider')) &&
-          (normalizedTitle.includes('waterspider') || normalizedTitle.includes('whdwaterspider'))) {
+          (normalizedTitle.includes('waterspider') || normalizedTitle.includes('whdwaterspider') ||
+           normalizedTitle.includes('decanterflow') || normalizedTitle.includes('creturnssupport'))) {
         return pathTitle;
       }
     }
