@@ -38,15 +38,13 @@
   let pathRefreshTimer = null;
 
   // Restricted paths configuration
-  const RESTRICTED_PATHS = ['C-Returns_StowSweep', 'Vreturns WaterSpider', 'C-Returns_EndofLine'];
+  const RESTRICTED_PATHS = [
+    'C-Returns_StowSweep',
+    'Vreturns WaterSpider',
+    'C-Returns_EndofLine',
+    'Water Spider'  // Covers WHD and C-Returns Water Spider roles
+  ];
   const PATH_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
-
-  // Prob Solve monitoring configuration
-  const PROB_SOLVE_MAX_MINUTES = 120; // 2 hours max on Prob Solve
-  const PROB_SOLVE_CHECK_INTERVAL = 10 * 60 * 1000; // Check every 10 minutes
-  let probSolveMonitorTimer = null;
-  let probSolveMonitorEnabled = true;
-  let isProcessingProbSolve = false; // Prevent concurrent processing
 
   // Load extension state and recent work codes from storage
   async function loadExtensionState() {
@@ -1318,334 +1316,6 @@
 
   // ============== PROB SOLVE MONITORING ==============
 
-  // Pending auto-stop state machine steps:
-  // 1. 'mstop_workcode' - Need to submit MSTOP work code (on work code page)
-  // 2. 'mstop_badge' - Need to submit badge ID for MSTOP (on badge page)
-  // 3. 'istop_workcode' - Need to submit ISTOP work code (on work code page)
-  // 4. 'istop_badge' - Need to submit badge ID for ISTOP (on badge page)
-  // 5. null/done - Complete
-
-  // Start Prob Solve monitoring (check every 10 minutes)
-  function startProbSolveMonitor() {
-    if (probSolveMonitorTimer) {
-      clearInterval(probSolveMonitorTimer);
-    }
-
-    console.log('[FC Labor Tracking] Starting Prob Solve monitor (every 10 minutes)');
-    console.log(`[FC Labor Tracking] Current page: ${isWorkCodePage ? 'Work Code' : 'Badge'}`);
-
-    // Run check every 10 minutes (only on work code page)
-    probSolveMonitorTimer = setInterval(() => {
-      if (probSolveMonitorEnabled && !isProcessingProbSolve && isWorkCodePage) {
-        console.log('[FC Labor Tracking] Running scheduled Prob Solve check...');
-        checkAndStopProbSolveAAs();
-      }
-    }, PROB_SOLVE_CHECK_INTERVAL);
-
-    // Do an initial check after 5 seconds (only on work code page)
-    if (isWorkCodePage) {
-      setTimeout(() => {
-        if (probSolveMonitorEnabled && !isProcessingProbSolve) {
-          console.log('[FC Labor Tracking] Running initial Prob Solve check...');
-          checkAndStopProbSolveAAs();
-        }
-      }, 5000);
-    }
-  }
-
-  // Check for pending auto-stop on page load and continue processing
-  async function checkPendingAutoStop() {
-    try {
-      const data = await browser.storage.local.get(['pendingAutoStop']);
-      const pending = data.pendingAutoStop;
-
-      if (!pending) {
-        return; // No pending auto-stop
-      }
-
-      console.log('[FC Labor Tracking] Found pending auto-stop:', pending);
-      console.log('[FC Labor Tracking] Current page: isWorkCodePage=' + isWorkCodePage + ', isBadgePage=' + isBadgePage);
-
-      // Check if it's too old (more than 2 minutes)
-      const age = Date.now() - pending.timestamp;
-      console.log('[FC Labor Tracking] Pending auto-stop age:', Math.round(age / 1000), 'seconds');
-      if (age > 120000) {
-        console.log('[FC Labor Tracking] Pending auto-stop expired (>2 min), clearing...');
-        await browser.storage.local.remove(['pendingAutoStop']);
-        return;
-      }
-
-      // Determine what page this step needs
-      const needsWorkCodePage = pending.step === 'mstop_workcode' || pending.step === 'istop_workcode';
-      const needsBadgePage = pending.step === 'mstop_badge' || pending.step === 'istop_badge';
-
-      // Handle page mismatch - navigate to correct page
-      if (needsWorkCodePage && isBadgePage) {
-        console.log('[FC Labor Tracking] Step needs work code page but on badge page, navigating back...');
-        // Navigate back to work code page
-        const backLink = document.querySelector('a[href*="laborTrackingKiosk"]') ||
-                        document.querySelector('a.back') ||
-                        document.querySelector('input[type="button"][value="Back"]') ||
-                        document.querySelector('button:contains("Back")');
-        if (backLink) {
-          backLink.click();
-          return;
-        }
-        // Alternative: navigate directly
-        const workCodeUrl = window.location.href.replace('/do/laborTrackingKiosk', '/laborTrackingKiosk');
-        console.log('[FC Labor Tracking] Navigating directly to:', workCodeUrl);
-        window.location.href = workCodeUrl;
-        return;
-      }
-
-      if (needsBadgePage && isWorkCodePage) {
-        console.log('[FC Labor Tracking] Step needs badge page but on work code page, waiting for navigation...');
-        // This shouldn't normally happen since work code submission leads to badge page
-        // Just wait - the user or previous form submission should navigate there
-        return;
-      }
-
-      // Process based on current step and page
-      if (pending.step === 'mstop_workcode' && isWorkCodePage) {
-        console.log('[FC Labor Tracking] Continuing auto-stop: submitting MSTOP work code...');
-        showProbSolveAlert(pending.name, pending.badgeId, pending.minutes);
-        await submitWorkCodeOnly('MSTOP');
-        // Update to next step
-        await browser.storage.local.set({
-          pendingAutoStop: { ...pending, step: 'mstop_badge', timestamp: Date.now() }
-        });
-      }
-      else if (pending.step === 'mstop_badge' && isBadgePage) {
-        console.log('[FC Labor Tracking] Continuing auto-stop: submitting badge for MSTOP...');
-        await submitBadgeOnly(pending.badgeId);
-        // Update to next step
-        await browser.storage.local.set({
-          pendingAutoStop: { ...pending, step: 'istop_workcode', timestamp: Date.now() }
-        });
-      }
-      else if (pending.step === 'istop_workcode' && isWorkCodePage) {
-        console.log('[FC Labor Tracking] Continuing auto-stop: submitting ISTOP work code...');
-        await submitWorkCodeOnly('ISTOP');
-        // Update to next step
-        await browser.storage.local.set({
-          pendingAutoStop: { ...pending, step: 'istop_badge', timestamp: Date.now() }
-        });
-      }
-      else if (pending.step === 'istop_badge' && isBadgePage) {
-        console.log('[FC Labor Tracking] Continuing auto-stop: submitting badge for ISTOP...');
-        await submitBadgeOnly(pending.badgeId);
-        // Done! Clear pending
-        await browser.storage.local.remove(['pendingAutoStop']);
-        console.log(`[FC Labor Tracking] ✓ Auto-stop COMPLETE for ${pending.name} (${pending.badgeId})`);
-        showPanelMessage(`Auto-stop complete for ${pending.name}`, 'success');
-      }
-      else {
-        console.log('[FC Labor Tracking] No matching condition for step:', pending.step, 'on this page type');
-      }
-
-    } catch (error) {
-      console.log('[FC Labor Tracking] Error processing pending auto-stop:', error);
-    }
-  }
-
-  // Submit work code only (without badge)
-  async function submitWorkCodeOnly(workCode) {
-    const calmCodeInput = document.getElementById('calmCode') ||
-                          document.querySelector('input[name="calmCode"]');
-
-    if (!calmCodeInput) {
-      throw new Error('Work code input not found');
-    }
-
-    calmCodeInput.focus();
-    calmCodeInput.value = workCode;
-    calmCodeInput.dispatchEvent(new Event('input', { bubbles: true }));
-    calmCodeInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-    await sleep(100);
-
-    const form = calmCodeInput.closest('form');
-    if (form) {
-      form.submit();
-    }
-  }
-
-  // Submit badge only (without work code)
-  async function submitBadgeOnly(badgeId) {
-    const badgeInput = document.getElementById('trackingBadgeId') ||
-                       document.querySelector('input[name="trackingBadgeId"]');
-
-    if (!badgeInput) {
-      throw new Error('Badge input not found');
-    }
-
-    // Set the badge value
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    nativeInputValueSetter.call(badgeInput, badgeId);
-    badgeInput.dispatchEvent(new Event('input', { bubbles: true }));
-    badgeInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-    await sleep(150);
-
-    // Click Done button
-    const submitBtn = document.querySelector('input[type="submit"][value="Done"]') ||
-                      document.querySelector('input[type="submit"]');
-
-    if (submitBtn) {
-      submitBtn.click();
-    } else {
-      const form = badgeInput.closest('form');
-      if (form) {
-        form.submit();
-      }
-    }
-  }
-
-  // Main function to check Prob Solve AAs and auto-stop those over 2 hours
-  async function checkAndStopProbSolveAAs() {
-    console.log('[FC Labor Tracking] === PROB SOLVE CHECK START ===');
-    console.log(`[FC Labor Tracking] isProcessingProbSolve: ${isProcessingProbSolve}`);
-    console.log(`[FC Labor Tracking] isWorkCodePage: ${isWorkCodePage}`);
-    console.log(`[FC Labor Tracking] PROB_SOLVE_MAX_MINUTES: ${PROB_SOLVE_MAX_MINUTES}`);
-
-    if (isProcessingProbSolve) {
-      console.log('[FC Labor Tracking] Prob Solve check already in progress, skipping...');
-      return;
-    }
-
-    // Don't start new checks if there's a pending auto-stop
-    const pendingData = await browser.storage.local.get(['pendingAutoStop']);
-    console.log('[FC Labor Tracking] Pending auto-stop data:', pendingData.pendingAutoStop);
-    if (pendingData.pendingAutoStop) {
-      console.log('[FC Labor Tracking] Pending auto-stop in progress, skipping check...');
-      return;
-    }
-
-    isProcessingProbSolve = true;
-    console.log('[FC Labor Tracking] Fetching Prob Solve AAs from FCLM...');
-
-    try {
-      // Fetch AAs in V-Returns Prob Solve
-      console.log('[FC Labor Tracking] Sending fetchProbSolveAAs message to background...');
-      const response = await browser.runtime.sendMessage({
-        action: 'fetchProbSolveAAs'
-      });
-
-      console.log('[FC Labor Tracking] Received response:', response);
-
-      if (!response.success || !response.data) {
-        console.log('[FC Labor Tracking] Failed to fetch Prob Solve AAs:', response.error || 'No data');
-        return;
-      }
-
-      const probSolveAAs = response.data;
-      console.log(`[FC Labor Tracking] Found ${probSolveAAs.length} AAs in Prob Solve`);
-      console.log('[FC Labor Tracking] AAs:', probSolveAAs.map(aa => `${aa.name} (${aa.employeeId}) - ${aa.hours}h`));
-
-      // Check each AA with 2+ hours total
-      for (const aa of probSolveAAs) {
-        if (aa.minutes >= PROB_SOLVE_MAX_MINUTES) {
-          console.log(`[FC Labor Tracking] AA ${aa.name} (${aa.employeeId}) has ${aa.minutes.toFixed(0)} mins on Prob Solve - checking current activity...`);
-
-          // Check if they're CURRENTLY on Prob Solve path
-          const activityResponse = await browser.runtime.sendMessage({
-            action: 'checkAACurrentActivity',
-            employeeId: aa.employeeId
-          });
-
-          if (activityResponse.success && activityResponse.data) {
-            const activity = activityResponse.data;
-
-            if (activity.isCurrentlyOnProbSolve) {
-              console.log(`[FC Labor Tracking] ⚠️ AA ${aa.name} is CURRENTLY on Prob Solve with ${activity.totalProbSolveMinutes.toFixed(0)} mins - AUTO-STOPPING!`);
-
-              // Start auto-stop by saving pending state
-              await browser.storage.local.set({
-                pendingAutoStop: {
-                  badgeId: aa.employeeId,
-                  name: aa.name,
-                  minutes: activity.totalProbSolveMinutes,
-                  step: 'mstop_workcode',
-                  timestamp: Date.now()
-                }
-              });
-
-              // Show notification
-              showProbSolveAlert(aa.name, aa.employeeId, activity.totalProbSolveMinutes);
-
-              // If we're on work code page, start immediately
-              if (isWorkCodePage) {
-                await submitWorkCodeOnly('MSTOP');
-                await browser.storage.local.set({
-                  pendingAutoStop: {
-                    badgeId: aa.employeeId,
-                    name: aa.name,
-                    minutes: activity.totalProbSolveMinutes,
-                    step: 'mstop_badge',
-                    timestamp: Date.now()
-                  }
-                });
-              }
-
-              // Only process one AA at a time
-              break;
-            } else {
-              console.log(`[FC Labor Tracking] AA ${aa.name} has ${aa.minutes.toFixed(0)} mins but NOT currently on Prob Solve (current: ${activity.currentActivity || 'none'})`);
-            }
-          }
-        }
-      }
-
-      console.log('[FC Labor Tracking] Prob Solve check complete');
-
-    } catch (error) {
-      console.log('[FC Labor Tracking] Error in Prob Solve check:', error);
-    } finally {
-      isProcessingProbSolve = false;
-    }
-  }
-
-  // Show alert for Prob Solve auto-stop
-  function showProbSolveAlert(name, badgeId, minutes) {
-    // Remove existing alert if any
-    const existing = document.getElementById('fc-prob-solve-alert');
-    if (existing) existing.remove();
-
-    // Create a floating alert
-    const alert = document.createElement('div');
-    alert.id = 'fc-prob-solve-alert';
-    alert.innerHTML = `
-      <div style="background: #e74c3c; color: #fff; padding: 12px 16px; border-radius: 8px;
-                  box-shadow: 0 4px 20px rgba(0,0,0,0.5); font-family: -apple-system, sans-serif;
-                  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-                  z-index: 9999999; text-align: center; min-width: 300px;">
-        <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">⚠️ PROB SOLVE LIMIT</div>
-        <div style="font-size: 14px; margin-bottom: 4px;">${name}</div>
-        <div style="font-size: 12px; color: #ffcccc;">Badge: ${badgeId}</div>
-        <div style="font-size: 14px; margin-top: 8px;">${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m on Prob Solve</div>
-        <div style="font-size: 12px; margin-top: 8px; color: #ffcccc;">Auto-submitting MSTOP + ISTOP...</div>
-      </div>
-    `;
-
-    document.body.appendChild(alert);
-
-    // Remove after 5 seconds
-    setTimeout(() => {
-      alert.remove();
-    }, 5000);
-  }
-
-  // Check for pending auto-stop on page load
-  setTimeout(() => {
-    checkPendingAutoStop();
-  }, 1000);
-
-  // Start Prob Solve monitor on both work code and badge pages
-  setTimeout(() => {
-    console.log('[FC Labor Tracking] Initializing Prob Solve monitor...');
-    startProbSolveMonitor();
-  }, 3000); // Start after 3 seconds
-
   // ============== FCLM INTEGRATION ==============
 
   // Quick MPV check using cached pathAAs data (no navigation needed!)
@@ -1924,7 +1594,8 @@
   const MPV_RESTRICTED_PATHS = {
     'C-Returns_StowSweep': ['STWSWP', 'STOWSWEEP', 'SWEEP', 'CRESW', 'STOW_SWEEP', 'STOWSW', 'STSW'],
     'C-Returns_EndofLine': ['CREOL', 'EOL', 'ENDOFLINE', 'END_OF_LINE', 'ENDLINE'],
-    'Vreturns WaterSpider': ['VRWS', 'WATERSPIDER', 'VRETWS', 'VRWATER']
+    'Vreturns WaterSpider': ['VRWS', 'VRETWS', 'VRWATER'],
+    'Water Spider': ['WHDWTSP', 'CRSDCNTF']
   };
 
   // Max time allowed on a restricted path (4 hours 30 minutes in minutes)
@@ -1973,7 +1644,10 @@
       if (pathTitle.includes('EndofLine') && (normalizedTitle.includes('endofline') || normalizedTitle.includes('eol'))) {
         return pathTitle;
       }
-      if (pathTitle.includes('WaterSpider') && (normalizedTitle.includes('waterspider') || normalizedTitle.includes('ws'))) {
+      // Water Spider matching - includes Decanter Flow for CRSDCNTF
+      if ((pathTitle.includes('WaterSpider') || pathTitle.includes('Water Spider')) &&
+          (normalizedTitle.includes('waterspider') || normalizedTitle.includes('whdwaterspider') ||
+           normalizedTitle.includes('decanterflow') || normalizedTitle.includes('creturnssupport'))) {
         return pathTitle;
       }
     }

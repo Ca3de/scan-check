@@ -617,35 +617,17 @@
       return true; // Async response
     }
 
-    if (message.action === 'fetchProbSolveAAs') {
-      fetchProbSolveAAs()
-        .then(data => {
-          sendResponse({ success: true, data });
-        })
-        .catch(error => {
-          sendResponse({ success: false, error: error.message });
-        });
-      return true; // Async response
-    }
-
-    if (message.action === 'checkAACurrentActivity') {
-      checkAACurrentActivity(message.employeeId)
-        .then(data => {
-          sendResponse({ success: true, data });
-        })
-        .catch(error => {
-          sendResponse({ success: false, error: error.message });
-        });
-      return true; // Async response
-    }
   });
 
   // ============== FETCH AAs ON RESTRICTED PATHS ==============
 
-  // Process IDs for C-Returns and V-Returns
+  // Process IDs for fetching function rollup data
   const PROCESS_IDS = {
     'C-Returns Support': '1003058',
-    'V-Returns': '1003059'
+    'C-Returns Processed': '1003026',
+    'V-Returns': '1003059',
+    'WHD Grading': '1002979',
+    'WHD Grading Support': '1003060'
   };
 
   async function fetchPathAAs(paths) {
@@ -871,173 +853,6 @@
     log(`Found ${totalAAs} total AAs on restricted paths`, 'success');
 
     return result;
-  }
-
-  // ============== PROB SOLVE MONITORING ==============
-
-  // Fetch AAs currently in V-Returns Prob Solve path
-  async function fetchProbSolveAAs() {
-    log('Fetching V-Returns Prob Solve AAs...');
-
-    const shiftRange = getShiftDateRange();
-    const result = [];
-
-    try {
-      // V-Returns process ID is 1003059
-      const params = new URLSearchParams({
-        reportFormat: 'HTML',
-        warehouseId: CONFIG.WAREHOUSE_ID,
-        processId: '1003059',
-        maxIntradayDays: '1',
-        spanType: 'Intraday',
-        startDateIntraday: shiftRange.startDate,
-        startHourIntraday: String(shiftRange.startHour),
-        startMinuteIntraday: '0',
-        endDateIntraday: shiftRange.endDate,
-        endHourIntraday: String(shiftRange.endHour),
-        endMinuteIntraday: '0'
-      });
-
-      const rollupUrl = `https://fclm-portal.amazon.com/reports/functionRollup?${params.toString()}`;
-      log(`Fetching Prob Solve rollup: ${rollupUrl}`);
-
-      const response = await fetch(rollupUrl, { credentials: 'include' });
-      const html = await response.text();
-
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-
-      // Look for V-Returns Prob Solve table (path ID 4300006859)
-      const tables = doc.querySelectorAll('table');
-
-      for (const table of tables) {
-        const tableText = table.textContent;
-
-        // Check if this table is for V-Returns Prob Solve
-        if (!tableText.includes('V-Returns Prob Solve') && !tableText.includes('Prob Solve')) {
-          continue;
-        }
-
-        log('Found V-Returns Prob Solve table');
-
-        // Find column indices
-        const rows = table.querySelectorAll('tr');
-        let totalColumnIndex = -1;
-        let idColumnIndex = 1;
-        let nameColumnIndex = 2;
-
-        // First pass: find header row
-        for (const row of rows) {
-          const cells = row.querySelectorAll('td');
-          if (cells.length > 0) {
-            const firstCellText = cells[0]?.textContent?.trim() || '';
-            if (firstCellText === 'Type') {
-              for (let i = 0; i < cells.length; i++) {
-                const cellText = cells[i]?.textContent?.trim()?.toLowerCase() || '';
-                if (cellText === 'total') {
-                  totalColumnIndex = i;
-                  log(`Found Total column at index ${i}`);
-                }
-              }
-              break;
-            }
-          }
-        }
-
-        // Second pass: parse data rows
-        for (const row of rows) {
-          const cells = row.querySelectorAll('td');
-          if (cells.length < 5) continue;
-
-          const firstCellText = cells[0]?.textContent?.trim() || '';
-          if (firstCellText !== 'AMZN') continue;
-
-          // Get employee ID (badge ID)
-          const idCell = cells[idColumnIndex];
-          const idLink = idCell?.querySelector('a');
-          const employeeId = idLink ? idLink.textContent.trim() : idCell?.textContent?.trim();
-
-          if (!employeeId || !/^\d+$/.test(employeeId)) continue;
-
-          // Get name
-          const nameCell = cells[nameColumnIndex];
-          const nameLink = nameCell?.querySelector('a');
-          const name = nameLink ? nameLink.textContent.trim() : nameCell?.textContent?.trim() || '';
-
-          // Get total hours
-          let hours = 0;
-          if (totalColumnIndex !== -1 && totalColumnIndex < cells.length) {
-            hours = parseFloat(cells[totalColumnIndex]?.textContent?.trim()) || 0;
-          } else {
-            // Fallback: find last numeric cell
-            for (let i = cells.length - 1; i >= 3; i--) {
-              const cellText = cells[i]?.textContent?.trim() || '';
-              if (/^[\d.]+$/.test(cellText)) {
-                hours = parseFloat(cellText) || 0;
-                break;
-              }
-            }
-          }
-
-          result.push({
-            employeeId,
-            name,
-            hours,
-            minutes: hours * 60
-          });
-
-          log(`Found Prob Solve AA: ${name} (${employeeId}) - ${hours}h`);
-        }
-      }
-
-    } catch (error) {
-      log(`Error fetching Prob Solve AAs: ${error.message}`, 'error');
-    }
-
-    log(`Found ${result.length} AAs in V-Returns Prob Solve`, 'success');
-    return result;
-  }
-
-  // Check if an AA is currently active on Prob Solve path
-  async function checkAACurrentActivity(employeeId) {
-    log(`Checking current activity for employee: ${employeeId}`);
-
-    try {
-      const timeDetails = await fetchEmployeeTimeDetails(employeeId);
-
-      // Check if current activity is "Vreturns Prob Solver"
-      const currentActivity = timeDetails.currentActivity;
-      const isProbSolve = currentActivity &&
-        (currentActivity.title.toLowerCase().includes('prob solve') ||
-         currentActivity.title.toLowerCase().includes('probsolve') ||
-         currentActivity.title.toLowerCase().includes('vreturns prob'));
-
-      // Calculate total time on Prob Solve path
-      let probSolveMinutes = 0;
-      for (const session of timeDetails.sessions) {
-        if (session.title.toLowerCase().includes('prob solve') ||
-            session.title.toLowerCase().includes('probsolve') ||
-            session.title.toLowerCase().includes('vreturns prob')) {
-          probSolveMinutes += session.durationMinutes || 0;
-        }
-      }
-
-      const result = {
-        employeeId,
-        currentActivity: currentActivity ? currentActivity.title : null,
-        isCurrentlyOnProbSolve: isProbSolve,
-        currentActivityDuration: currentActivity ? currentActivity.durationMinutes : 0,
-        totalProbSolveMinutes: probSolveMinutes,
-        sessions: timeDetails.sessions
-      };
-
-      log(`Employee ${employeeId}: Currently on Prob Solve: ${isProbSolve}, Total time: ${probSolveMinutes} mins`);
-      return result;
-
-    } catch (error) {
-      log(`Error checking current activity: ${error.message}`, 'error');
-      throw error;
-    }
   }
 
   // ============== UI INDICATOR ==============
