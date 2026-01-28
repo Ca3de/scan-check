@@ -42,7 +42,9 @@
     'C-Returns_StowSweep',
     'Vreturns WaterSpider',
     'C-Returns_EndofLine',
-    'Water Spider'  // Covers WHD and C-Returns Water Spider roles
+    'Water Spider',      // Generic Water Spider (covers CRET)
+    'WHD Waterspider',   // WHD Water Spider variant
+    'WHD Water Spider'   // WHD Water Spider with space
   ];
   const PATH_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
@@ -1595,7 +1597,9 @@
     'C-Returns_StowSweep': ['STWSWP', 'STOWSWEEP', 'SWEEP', 'CRESW', 'STOW_SWEEP', 'STOWSW', 'STSW'],
     'C-Returns_EndofLine': ['CREOL', 'EOL', 'ENDOFLINE', 'END_OF_LINE', 'ENDLINE'],
     'Vreturns WaterSpider': ['VRWS', 'VRETWS', 'VRWATER'],
-    'Water Spider': ['WHDWTSP', 'CRSDCNTF']
+    'Water Spider': ['CRSDCNTF'],           // CRET Water Spider
+    'WHD Waterspider': ['WHDWTSP'],         // WHD Water Spider
+    'WHD Water Spider': ['WHDWTSP']         // WHD Water Spider (with space)
   };
 
   // Max time allowed on a restricted path (4 hours 30 minutes in minutes)
@@ -1644,12 +1648,20 @@
       if (pathTitle.includes('EndofLine') && (normalizedTitle.includes('endofline') || normalizedTitle.includes('eol'))) {
         return pathTitle;
       }
-      // Water Spider matching - includes Decanter Flow for CRSDCNTF
-      if ((pathTitle.includes('WaterSpider') || pathTitle.includes('Water Spider')) &&
-          (normalizedTitle.includes('waterspider') || normalizedTitle.includes('whdwaterspider') ||
-           normalizedTitle.includes('decanterflow') || normalizedTitle.includes('creturnssupport'))) {
-        return pathTitle;
-      }
+    }
+
+    // Water Spider matching - check specific types first, then generic
+    // WHD Water Spider - matches WHD Waterspider, WHD Grading Support Water Spider
+    if (normalizedTitle.includes('whdwaterspider') || normalizedTitle.includes('whdgrading')) {
+      return 'WHD Waterspider';
+    }
+    // CRET Water Spider - matches Decanter Flow, C-Returns Support Water Spider
+    if (normalizedTitle.includes('decanterflow') || normalizedTitle.includes('creturnssupport')) {
+      return 'Water Spider';
+    }
+    // Generic water spider fallback
+    if (normalizedTitle.includes('waterspider')) {
+      return 'Water Spider';
     }
     return null;
   }

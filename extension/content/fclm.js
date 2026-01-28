@@ -702,7 +702,23 @@
 
           if (!tablePath) continue;
 
-          log(`Parsing table for path: ${tablePath}`);
+          // Special handling for Water Spider - distinguish by source process
+          // WHD processes -> WHD Waterspider, C-Returns processes -> Water Spider (CRET)
+          if (tablePath === 'Water Spider') {
+            if (processName.includes('WHD') || processName.includes('Warehouse')) {
+              tablePath = 'WHD Waterspider';
+              log(`Water Spider from WHD process -> mapping to WHD Waterspider`);
+            } else {
+              log(`Water Spider from ${processName} -> keeping as Water Spider (CRET)`);
+            }
+          }
+
+          log(`Parsing table for path: ${tablePath} (from ${processName})`);
+
+          // Make sure the result array exists for this path
+          if (!result[tablePath]) {
+            result[tablePath] = [];
+          }
 
           // Find the header row to determine the "Total" column index
           const rows = table.querySelectorAll('tr');
