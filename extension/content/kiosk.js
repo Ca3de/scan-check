@@ -39,7 +39,6 @@
 
   // Restricted paths configuration
   const RESTRICTED_PATHS = [
-    'C-Returns_StowSweep',
     'Vreturns WaterSpider',
     'C-Returns_EndofLine',
     'Water Spider',      // Generic Water Spider (covers CRET)
@@ -1594,7 +1593,6 @@
   // MPV (Multiple Path Violation) Configuration
   // These are the restricted paths that can cause MPV
   const MPV_RESTRICTED_PATHS = {
-    'C-Returns_StowSweep': ['STWSWP', 'STOWSWEEP', 'SWEEP', 'CRESW', 'STOW_SWEEP', 'STOWSW', 'STSW'],
     'C-Returns_EndofLine': ['CREOL', 'EOL', 'ENDOFLINE', 'END_OF_LINE', 'ENDLINE'],
     'Vreturns WaterSpider': ['VRWS', 'VRETWS', 'VRWATER'],
     'Water Spider': ['CRSDCNTF'],           // CRET Water Spider
