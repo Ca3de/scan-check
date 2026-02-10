@@ -667,25 +667,8 @@
         const doc = parser.parseFromString(html, 'text/html');
 
         // Find all tables - each path has its own table with a header
-        // The structure is: header row with path name, then column headers, then data rows
-        const allElements = doc.body.querySelectorAll('*');
-        let currentPath = null;
-
-        for (const elem of allElements) {
-          const text = elem.textContent.trim();
-
-          // Check if this element is a path header
-          // Headers look like: "C-Returns_StowSweep [1599235343587]" or "Vreturns WaterSpider [ID]"
-          for (const path of paths) {
-            if (text.includes(path) && (text.includes('[') || elem.tagName === 'B' || elem.tagName === 'STRONG')) {
-              currentPath = path;
-              log(`Found path section: ${path}`);
-              break;
-            }
-          }
-        }
-
-        // Better approach: find tables and look for path names in table headers/caption
+        // Sort paths longest-first so "WHD Water Spider" matches before "Water Spider"
+        const sortedPaths = [...paths].sort((a, b) => b.length - a.length);
         const tables = doc.querySelectorAll('table');
 
         for (const table of tables) {
@@ -693,10 +676,37 @@
 
           // Check which path this table belongs to
           let tablePath = null;
-          for (const path of paths) {
+
+          // Strategy 1: Check if path name is inside the table itself
+          for (const path of sortedPaths) {
             if (tableText.includes(path)) {
               tablePath = path;
               break;
+            }
+          }
+
+          // Strategy 2: Check preceding siblings for a section header
+          // FCLM section headers (e.g., "Water Spider [4300006861]") are often
+          // outside the data table in a preceding element
+          if (!tablePath) {
+            let prevEl = table.previousElementSibling;
+            while (prevEl) {
+              // Stop if we hit another table (we've gone past our section)
+              if (prevEl.tagName === 'TABLE') break;
+
+              const prevText = prevEl.textContent.trim();
+              // Section headers contain path name + [processId]
+              if (prevText.includes('[') && /\[\d+\]/.test(prevText)) {
+                for (const path of sortedPaths) {
+                  if (prevText.includes(path)) {
+                    tablePath = path;
+                    break;
+                  }
+                }
+                break; // Stop at first header-like element
+              }
+
+              prevEl = prevEl.previousElementSibling;
             }
           }
 
@@ -780,8 +790,8 @@
             if (firstCellText === 'Type' || firstCellText === 'Total' || firstCellText === '') continue;
 
             // Structure: Type | ID | Name | Manager | ... | Total
-            // Type is usually "AMZN"
-            if (firstCellText !== 'AMZN') continue;
+            // Type is usually "AMZN" but can also be "TEMP"
+            if (firstCellText !== 'AMZN' && firstCellText !== 'TEMP') continue;
 
             // DEBUG: Log all cell values for this row
             const cellValues = Array.from(cells).map((c, i) => `[${i}]=${c.textContent.trim().substring(0, 15)}`);
