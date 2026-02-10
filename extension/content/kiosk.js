@@ -43,7 +43,8 @@
     'C-Returns_EndofLine',
     'Water Spider',      // Generic Water Spider (covers CRET)
     'WHD Waterspider',   // WHD Water Spider variant
-    'WHD Water Spider'   // WHD Water Spider with space
+    'WHD Water Spider',  // WHD Water Spider with space
+    'Team_Mech_Wspider'  // CRET Support Team Mech Water Spider
   ];
   const PATH_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
@@ -1260,6 +1261,7 @@
       // Shorten path names for display
       let shortName = pathName;
       if (pathName.includes('StowSweep')) shortName = 'STWSWP';
+      else if (pathName.includes('Team_Mech_Wspider')) shortName = 'TMWSP';
       else if (pathName.includes('WaterSpider')) shortName = 'VRWS';
       else if (pathName.includes('EndofLine')) shortName = 'CREOL';
       header.textContent = `${shortName} (${pathData.length})`;
@@ -1314,8 +1316,6 @@
     }
     return `${mins}m`;
   }
-
-  // ============== PROB SOLVE MONITORING ==============
 
   // ============== FCLM INTEGRATION ==============
 
@@ -1597,7 +1597,8 @@
     'Vreturns WaterSpider': ['VRWS', 'VRETWS', 'VRWATER'],
     'Water Spider': ['CRSDCNTF'],           // CRET Water Spider
     'WHD Waterspider': ['WHDWTSP'],         // WHD Water Spider
-    'WHD Water Spider': ['WHDWTSP']         // WHD Water Spider (with space)
+    'WHD Water Spider': ['WHDWTSP'],        // WHD Water Spider (with space)
+    'Team_Mech_Wspider': ['TMWSP']          // CRET Support Team Mech Water Spider
   };
 
   // Max time allowed on a restricted path (4 hours 30 minutes in minutes)
