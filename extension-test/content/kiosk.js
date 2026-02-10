@@ -553,7 +553,7 @@
       .fc-lt-path-list {
         background: #0f0f1a;
         border-radius: 4px;
-        max-height: 150px;
+        max-height: 60vh;
         overflow-y: auto;
       }
       .fc-lt-path-empty {
@@ -1244,6 +1244,10 @@
     const pathList = document.getElementById('fc-lt-path-list');
     if (!pathList) return;
 
+    console.log('[FC Labor Tracking] displayPathAAs called');
+    console.log('[FC Labor Tracking] RESTRICTED_PATHS:', JSON.stringify(RESTRICTED_PATHS));
+    console.log('[FC Labor Tracking] data keys:', JSON.stringify(Object.keys(data || {})));
+
     pathList.textContent = '';
 
     // Short name mapping for all restricted paths
@@ -1259,6 +1263,7 @@
 
     for (const pathName of RESTRICTED_PATHS) {
       const pathData = data[pathName] || [];
+      console.log(`[FC Labor Tracking] Rendering path: ${pathName} -> ${PATH_SHORT_NAMES[pathName] || pathName} (${pathData.length} AAs)`);
 
       const group = document.createElement('div');
       group.className = 'fc-lt-path-group';
