@@ -553,7 +553,7 @@
       .fc-lt-path-list {
         background: #0f0f1a;
         border-radius: 4px;
-        max-height: 150px;
+        max-height: 60vh;
         overflow-y: auto;
       }
       .fc-lt-path-empty {
