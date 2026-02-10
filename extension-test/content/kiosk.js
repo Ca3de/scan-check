@@ -553,7 +553,7 @@
       .fc-lt-path-list {
         background: #0f0f1a;
         border-radius: 4px;
-        max-height: 60vh;
+        max-height: 150px;
         overflow-y: auto;
       }
       .fc-lt-path-empty {
@@ -1244,33 +1244,29 @@
     const pathList = document.getElementById('fc-lt-path-list');
     if (!pathList) return;
 
-    console.log('[FC Labor Tracking] displayPathAAs called');
-    console.log('[FC Labor Tracking] RESTRICTED_PATHS:', JSON.stringify(RESTRICTED_PATHS));
-    console.log('[FC Labor Tracking] data keys:', JSON.stringify(Object.keys(data || {})));
-
     pathList.textContent = '';
 
-    // Short name mapping for all restricted paths
-    const PATH_SHORT_NAMES = {
-      'C-Returns_StowSweep': 'STWSWP',
-      'Vreturns WaterSpider': 'VRWS',
-      'C-Returns_EndofLine': 'CREOL',
-      'Water Spider': 'CRSDCNTF',
-      'WHD Waterspider': 'WHDWTSP',
-      'WHD Water Spider': 'WHDWTSP',
-      'Team_Mech_Wspider': 'TMWSP'
-    };
+    let hasAnyAAs = false;
 
     for (const pathName of RESTRICTED_PATHS) {
-      const pathData = data[pathName] || [];
-      console.log(`[FC Labor Tracking] Rendering path: ${pathName} -> ${PATH_SHORT_NAMES[pathName] || pathName} (${pathData.length} AAs)`);
+      const pathData = data[pathName];
+      if (!pathData || pathData.length === 0) continue;
+
+      hasAnyAAs = true;
 
       const group = document.createElement('div');
       group.className = 'fc-lt-path-group';
 
       const header = document.createElement('div');
       header.className = 'fc-lt-path-name';
-      const shortName = PATH_SHORT_NAMES[pathName] || pathName;
+      // Shorten path names for display
+      let shortName = pathName;
+      if (pathName.includes('StowSweep')) shortName = 'STWSWP';
+      else if (pathName.includes('Team_Mech_Wspider')) shortName = 'TMWSP';
+      else if (pathName === 'Water Spider') shortName = 'CRSDCNTF';
+      else if (pathName.includes('WHD')) shortName = 'WHDWTSP';
+      else if (pathName.includes('WaterSpider')) shortName = 'VRWS';
+      else if (pathName.includes('EndofLine')) shortName = 'CREOL';
       header.textContent = `${shortName} (${pathData.length})`;
       group.appendChild(header);
 
@@ -1304,6 +1300,13 @@
       }
 
       pathList.appendChild(group);
+    }
+
+    if (!hasAnyAAs) {
+      const empty = document.createElement('div');
+      empty.className = 'fc-lt-path-empty';
+      empty.textContent = 'No AAs on restricted paths';
+      pathList.appendChild(empty);
     }
   }
 

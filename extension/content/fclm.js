@@ -667,52 +667,36 @@
         const doc = parser.parseFromString(html, 'text/html');
 
         // Find all tables - each path has its own table with a header
-        // Sort paths longest-first so "WHD Water Spider" matches before "Water Spider"
-        const sortedPaths = [...paths].sort((a, b) => b.length - a.length);
+        // The structure is: header row with path name, then column headers, then data rows
+        const allElements = doc.body.querySelectorAll('*');
+        let currentPath = null;
+
+        for (const elem of allElements) {
+          const text = elem.textContent.trim();
+
+          // Check if this element is a path header
+          // Headers look like: "C-Returns_StowSweep [1599235343587]" or "Vreturns WaterSpider [ID]"
+          for (const path of paths) {
+            if (text.includes(path) && (text.includes('[') || elem.tagName === 'B' || elem.tagName === 'STRONG')) {
+              currentPath = path;
+              log(`Found path section: ${path}`);
+              break;
+            }
+          }
+        }
+
+        // Better approach: find tables and look for path names in table headers/caption
         const tables = doc.querySelectorAll('table');
 
         for (const table of tables) {
-          // Skip layout/wrapper tables that contain nested tables
-          // Only process leaf-level data tables
-          if (table.querySelector('table')) continue;
-
           const tableText = table.textContent;
 
           // Check which path this table belongs to
           let tablePath = null;
-
-          // Strategy 1: Check if path name is inside the table itself
-          for (const path of sortedPaths) {
+          for (const path of paths) {
             if (tableText.includes(path)) {
               tablePath = path;
               break;
-            }
-          }
-
-          // Strategy 2: Check preceding siblings for a section header
-          // FCLM section headers (e.g., "Water Spider [4300006861]") are often
-          // outside the data table - either as a plain element or inside a
-          // separate header/filter table that precedes the data table
-          if (!tablePath) {
-            let prevEl = table.previousElementSibling;
-            while (prevEl) {
-              const prevText = prevEl.textContent.trim();
-
-              // Check if this element (including preceding tables) contains a path header
-              if (prevText.includes('[') && /\[\d+\]/.test(prevText)) {
-                for (const path of sortedPaths) {
-                  if (prevText.includes(path)) {
-                    tablePath = path;
-                    break;
-                  }
-                }
-                break; // Stop at first header-like element
-              }
-
-              // Stop if we hit a table that isn't a header (no [id] pattern)
-              if (prevEl.tagName === 'TABLE') break;
-
-              prevEl = prevEl.previousElementSibling;
             }
           }
 
