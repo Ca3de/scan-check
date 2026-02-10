@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>FC Labor Tracking Assistant</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Labor Tracking</h1>
+
+    <div id="status-indicator" class="status disconnected">
+      <span class="status-dot"></span>
+      <span class="status-text">Not connected to kiosk</span>
+    </div>
+
+    <!-- Work Code Section -->
+    <div id="work-code-section" class="section">
+      <label for="work-code">Work Code</label>
+      <input type="text" id="work-code" placeholder="Enter work code (e.g., CREOL)" autocomplete="off">
+      <button id="submit-work-code" class="btn primary">Submit Work Code</button>
+    </div>
+
+    <!-- Badge ID Section (hidden initially) -->
+    <div id="badge-section" class="section hidden">
+      <label for="badge-id">Badge ID</label>
+      <input type="text" id="badge-id" placeholder="Scan or enter badge ID" autocomplete="off">
+      <button id="submit-badge" class="btn primary">Submit Badge</button>
+      <button id="back-to-workcode" class="btn secondary">Back</button>
+    </div>
+
+    <!-- Status Messages -->
+    <div id="message" class="message hidden"></div>
+
+    <!-- Recent Activity -->
+    <div id="recent-activity" class="recent-activity">
+      <h3>Recent Activity</h3>
+      <ul id="activity-list"></ul>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

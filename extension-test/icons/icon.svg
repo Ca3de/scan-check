@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Background - rounded square -->
+  <rect width="128" height="128" rx="24" fill="#232f3e"/>
+
+  <!-- Shield shape -->
+  <path d="M64 16 L104 32 L104 64 Q104 96 64 112 Q24 96 24 64 L24 32 Z"
+        fill="#ff9900" stroke="#fff" stroke-width="2"/>
+
+  <!-- Inner shield -->
+  <path d="M64 26 L94 39 L94 62 Q94 88 64 102 Q34 88 34 62 L34 39 Z"
+        fill="#232f3e"/>
+
+  <!-- Checkmark -->
+  <path d="M48 62 L58 74 L80 48"
+        fill="none" stroke="#00d26a" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Scanner lines at bottom -->
+  <rect x="44" y="82" width="40" height="3" rx="1" fill="#ff9900"/>
+  <rect x="50" y="88" width="28" height="3" rx="1" fill="#ff9900" opacity="0.7"/>
+  <rect x="56" y="94" width="16" height="3" rx="1" fill="#ff9900" opacity="0.5"/>
+</svg>

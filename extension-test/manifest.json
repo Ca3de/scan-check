@@ -1,0 +1,61 @@
+{
+  "manifest_version": 2,
+  "name": "FC Labor Tracking Assistant (TEST)",
+  "version": "1.4.6-test",
+  "description": "TEST BUILD - Includes STWSWP for MPV testing. Not for production use.",
+  "author": "Ca3de",
+  "homepage_url": "https://github.com/Ca3de/scan-check",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "fc-labor-tracking-test@ca3de.github.io",
+      "strict_min_version": "139.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "*://fcmenu-iad-regionalized.corp.amazon.com/*",
+    "*://fclm-portal.amazon.com/*"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://fcmenu-iad-regionalized.corp.amazon.com/*/laborTrackingKiosk*",
+        "*://fcmenu-iad-regionalized.corp.amazon.com/do/laborTrackingKiosk*"
+      ],
+      "js": ["content/kiosk.js"],
+      "css": ["content/kiosk.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://fclm-portal.amazon.com/*"
+      ],
+      "js": ["content/fclm.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    },
+    "default_title": "FC Labor Tracking Assistant (TEST)",
+    "default_popup": "popup/popup.html"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
