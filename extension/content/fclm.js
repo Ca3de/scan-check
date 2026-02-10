@@ -687,15 +687,14 @@
 
           // Strategy 2: Check preceding siblings for a section header
           // FCLM section headers (e.g., "Water Spider [4300006861]") are often
-          // outside the data table in a preceding element
+          // outside the data table - either as a plain element or inside a
+          // separate header/filter table that precedes the data table
           if (!tablePath) {
             let prevEl = table.previousElementSibling;
             while (prevEl) {
-              // Stop if we hit another table (we've gone past our section)
-              if (prevEl.tagName === 'TABLE') break;
-
               const prevText = prevEl.textContent.trim();
-              // Section headers contain path name + [processId]
+
+              // Check if this element (including preceding tables) contains a path header
               if (prevText.includes('[') && /\[\d+\]/.test(prevText)) {
                 for (const path of sortedPaths) {
                   if (prevText.includes(path)) {
@@ -705,6 +704,9 @@
                 }
                 break; // Stop at first header-like element
               }
+
+              // Stop if we hit a table that isn't a header (no [id] pattern)
+              if (prevEl.tagName === 'TABLE') break;
 
               prevEl = prevEl.previousElementSibling;
             }
