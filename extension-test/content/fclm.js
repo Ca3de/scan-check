@@ -672,6 +672,10 @@
         const tables = doc.querySelectorAll('table');
 
         for (const table of tables) {
+          // Skip layout/wrapper tables that contain nested tables
+          // Only process leaf-level data tables
+          if (table.querySelector('table')) continue;
+
           const tableText = table.textContent;
 
           // Check which path this table belongs to
