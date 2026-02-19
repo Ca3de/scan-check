@@ -16,8 +16,6 @@ const backBtn = document.getElementById('back-to-workcode');
 const messageDiv = document.getElementById('message');
 const activityList = document.getElementById('activity-list');
 
-const copyFclmCookieBtn = document.getElementById('copy-fclm-cookie');
-
 let kioskTabId = null;
 let fclmTabId = null;
 let currentState = 'work-code'; // 'work-code' or 'badge'
@@ -96,9 +94,6 @@ function setupEventListeners() {
   backBtn.addEventListener('click', () => {
     switchToWorkCodeMode();
   });
-
-  // Copy FCLM cookie button
-  copyFclmCookieBtn.addEventListener('click', copyFclmCookie);
 }
 
 async function submitWorkCode() {
@@ -267,25 +262,5 @@ async function loadRecentActivity() {
     }
   } catch (error) {
     console.error('Error loading recent activity:', error);
-  }
-}
-
-async function copyFclmCookie() {
-  try {
-    const cookies = await browser.cookies.getAll({ domain: "fclm-portal.amazon.com" });
-    if (!cookies || cookies.length === 0) {
-      showMessage('No FCLM cookies found. Open fclm-portal.amazon.com and log in first.', 'error');
-      return;
-    }
-    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-    await navigator.clipboard.writeText(cookieStr);
-    copyFclmCookieBtn.textContent = 'Copied!';
-    showMessage(`Copied ${cookies.length} cookies. Paste into Tracker FCLM Settings.`, 'success');
-    setTimeout(() => {
-      copyFclmCookieBtn.textContent = 'Copy FCLM Cookie for Tracker';
-    }, 3000);
-  } catch (error) {
-    console.error('Error copying FCLM cookie:', error);
-    showMessage('Failed to copy cookies: ' + error.message, 'error');
   }
 }
