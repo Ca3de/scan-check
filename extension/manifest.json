@@ -18,6 +18,7 @@
     "activeTab",
     "tabs",
     "storage",
+    "cookies",
     "*://fcmenu-iad-regionalized.corp.amazon.com/*",
     "*://fclm-portal.amazon.com/*"
   ],
