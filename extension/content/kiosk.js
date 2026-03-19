@@ -909,13 +909,13 @@
     let isProcessing = false;
     let bypassingInterception = false; // Global bypass flag for our own submissions
 
-    // Main flow: on input, start lookup, then auto-submit if cleared
-    async function processBadgeScan(badgeId) {
+    // Lookup only - does NOT submit. Called on input change.
+    async function lookupBadgeScan(badgeId) {
       if (!badgeId || badgeId.length < 3 || isProcessing || badgeId === lastProcessedBadge) {
         return;
       }
 
-      console.log('[FC Labor Tracking] Processing badge scan:', badgeId);
+      console.log('[FC Labor Tracking] Looking up badge scan:', badgeId);
       isProcessing = true;
       lastProcessedBadge = badgeId;
 
@@ -926,47 +926,17 @@
       }
 
       try {
-        // Start MPV lookup
+        // Start MPV lookup only - do NOT auto-submit
         showPanelMessage('Checking MPV status...', 'info');
         await lookupAssociate(badgeId);
 
-        // After lookup completes, check result and auto-submit if cleared
+        // Show result but wait for Enter to submit
         if (currentMpvCheckResult && currentMpvCheckResult.hasMpvRisk) {
-          // MPV BLOCKED - do NOT submit
-          console.log('[FC Labor Tracking] MPV BLOCKED - NOT submitting badge');
-          showPanelMessage('🚫 MPV Risk - Badge NOT submitted!', 'error');
-
-          // Clear the input so they can't accidentally submit
-          nativeBadgeInput.value = '';
-          if (panelInput) panelInput.value = '';
-
-          // Flash warning
-          const infoDiv = document.getElementById('fc-lt-associate-info');
-          if (infoDiv) {
-            infoDiv.style.transform = 'scale(1.05)';
-            setTimeout(() => { infoDiv.style.transform = 'scale(1)'; }, 200);
-          }
+          console.log('[FC Labor Tracking] MPV BLOCKED');
+          showPanelMessage('🚫 MPV Risk - Press Enter blocked!', 'error');
         } else {
-          // CLEARED - auto-submit the badge
-          console.log('[FC Labor Tracking] MPV CLEARED - auto-submitting badge');
-          showPanelMessage('✓ Cleared - Submitting...', 'success');
-
-          // Submit via native form
-          await actuallySubmitBadge(badgeId);
-
-          showPanelMessage('Badge added!', 'success');
-
-          // Clear for next badge
-          nativeBadgeInput.value = '';
-          if (panelInput) panelInput.value = '';
-          hideAssociateInfo();
-          currentMpvCheckResult = null;
-          lastProcessedBadge = '';
-
-          setTimeout(() => {
-            showPanelMessage('Ready for next badge', 'info');
-            nativeBadgeInput.focus();
-          }, 800);
+          console.log('[FC Labor Tracking] MPV CLEARED - waiting for Enter to submit');
+          showPanelMessage('✓ Cleared - Press Enter to submit', 'success');
         }
       } catch (error) {
         console.log('[FC Labor Tracking] Lookup error:', error);
@@ -974,6 +944,74 @@
       } finally {
         isProcessing = false;
       }
+    }
+
+    // Submit badge after Enter key - checks MPV result and submits if cleared
+    async function submitBadgeScan(badgeId) {
+      if (!badgeId || badgeId.length < 3) return;
+
+      // If lookup is still in progress, wait for it
+      if (isProcessing) {
+        console.log('[FC Labor Tracking] Waiting for lookup to complete before submit...');
+        showPanelMessage('Checking MPV status...', 'info');
+        // Wait up to 5 seconds for lookup to complete
+        for (let i = 0; i < 50 && isProcessing; i++) {
+          await sleep(100);
+        }
+      }
+
+      // If no lookup was done yet (very fast paste+enter), do it now
+      if (!currentMpvCheckResult && badgeId !== lastProcessedBadge) {
+        console.log('[FC Labor Tracking] No MPV result yet, performing lookup now...');
+        showPanelMessage('Checking MPV status...', 'info');
+        isProcessing = true;
+        try {
+          await lookupAssociate(badgeId);
+          lastProcessedBadge = badgeId;
+        } finally {
+          isProcessing = false;
+        }
+      }
+
+      const panelInput = document.getElementById('fc-lt-badge');
+
+      // Check MPV result
+      if (currentMpvCheckResult && currentMpvCheckResult.hasMpvRisk) {
+        console.log('[FC Labor Tracking] MPV BLOCKED - NOT submitting badge');
+        showPanelMessage('🚫 MPV Risk - Badge NOT submitted!', 'error');
+
+        // Clear the input so they can't accidentally submit
+        nativeBadgeInput.value = '';
+        if (panelInput) panelInput.value = '';
+
+        // Flash warning
+        const infoDiv = document.getElementById('fc-lt-associate-info');
+        if (infoDiv) {
+          infoDiv.style.transform = 'scale(1.05)';
+          setTimeout(() => { infoDiv.style.transform = 'scale(1)'; }, 200);
+        }
+        return;
+      }
+
+      // CLEARED - submit the badge
+      console.log('[FC Labor Tracking] MPV CLEARED - submitting badge');
+      showPanelMessage('✓ Submitting...', 'success');
+
+      await actuallySubmitBadge(badgeId);
+
+      showPanelMessage('Badge added!', 'success');
+
+      // Clear for next badge
+      nativeBadgeInput.value = '';
+      if (panelInput) panelInput.value = '';
+      hideAssociateInfo();
+      currentMpvCheckResult = null;
+      lastProcessedBadge = '';
+
+      setTimeout(() => {
+        showPanelMessage('Ready for next badge', 'info');
+        nativeBadgeInput.focus();
+      }, 800);
     }
 
     // Actually submit the badge to the native form (called after MPV cleared)
@@ -1029,13 +1067,13 @@
         panelInput.value = badgeId;
       }
 
-      // Process if valid badge length
+      // Process if valid badge length - lookup only, no auto-submit
       if (badgeId.length >= 3) {
-        processBadgeScan(badgeId);
+        lookupBadgeScan(badgeId);
       }
     }, 150));
 
-    // ALWAYS block Enter key from scanner - we handle submission ourselves
+    // On Enter key: run MPV check then submit if cleared
     nativeBadgeInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         if (!extensionEnabled) {
@@ -1043,12 +1081,16 @@
           return;
         }
 
-        // BLOCK Enter completely - our input handler already triggered the lookup
-        console.log('[FC Labor Tracking] Enter BLOCKED - lookup already in progress');
+        // Block native submit - we handle it after MPV check
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        // Do NOT call submitBadge - the input event already triggered processing
+
+        const badgeId = nativeBadgeInput.value.trim();
+        if (badgeId.length >= 3) {
+          console.log('[FC Labor Tracking] Enter pressed - submitting with MPV check');
+          submitBadgeScan(badgeId);
+        }
       }
     }, true);
 
@@ -1089,14 +1131,14 @@
           return;
         }
 
-        // Block the click - our flow handles submission
-        console.log('[FC Labor Tracking] Done button BLOCKED - use scanner flow');
+        // Block the click - our flow handles submission via Enter
+        console.log('[FC Labor Tracking] Done button BLOCKED - press Enter to submit');
         e.preventDefault();
         e.stopPropagation();
 
-        // If not already processing, trigger it
+        // If not already processing, trigger submit flow
         if (!isProcessing) {
-          processBadgeScan(badgeId);
+          submitBadgeScan(badgeId);
         }
       }, true);
     }
@@ -1161,7 +1203,8 @@
 
   // ============== PATH AA TRACKING ==============
 
-  async function refreshPathAAs() {
+  async function refreshPathAAs(retryCount = 0) {
+    const MAX_RETRIES = 2;
     const refreshBtn = document.getElementById('fc-lt-refresh-paths');
     const pathList = document.getElementById('fc-lt-path-list');
     const updatedDiv = document.getElementById('fc-lt-path-updated');
@@ -1171,7 +1214,7 @@
     }
 
     try {
-      console.log('[FC Labor Tracking] Fetching path AAs from FCLM...');
+      console.log('[FC Labor Tracking] Fetching path AAs from FCLM... (attempt ' + (retryCount + 1) + ')');
 
       const response = await browser.runtime.sendMessage({
         action: 'fetchPathAAs',
@@ -1179,6 +1222,19 @@
       });
 
       if (response.success && response.data) {
+        // Check if response is empty (all paths have 0 AAs)
+        const totalAAs = Object.values(response.data).reduce((sum, arr) => sum + arr.length, 0);
+
+        if (totalAAs === 0 && retryCount < MAX_RETRIES) {
+          // Empty result - FCLM page may still be loading. Retry after delay.
+          console.log('[FC Labor Tracking] Got empty result, retrying in ' + (2 + retryCount * 2) + 's...');
+          if (updatedDiv) {
+            updatedDiv.textContent = 'Retrying... (' + (retryCount + 1) + '/' + MAX_RETRIES + ')';
+          }
+          await sleep((2 + retryCount * 2) * 1000);
+          return refreshPathAAs(retryCount + 1);
+        }
+
         displayPathAAs(response.data);
 
         // Cache the data
@@ -1191,6 +1247,16 @@
           updatedDiv.textContent = 'Updated: ' + new Date().toLocaleTimeString();
         }
       } else {
+        // FCLM error - retry if we haven't exhausted attempts
+        if (retryCount < MAX_RETRIES) {
+          console.log('[FC Labor Tracking] Fetch failed, retrying in ' + (2 + retryCount * 2) + 's...');
+          if (updatedDiv) {
+            updatedDiv.textContent = 'Retrying... (' + (retryCount + 1) + '/' + MAX_RETRIES + ')';
+          }
+          await sleep((2 + retryCount * 2) * 1000);
+          return refreshPathAAs(retryCount + 1);
+        }
+
         if (pathList) {
           pathList.textContent = '';
           const empty = document.createElement('div');
@@ -1201,6 +1267,13 @@
       }
     } catch (e) {
       console.log('[FC Labor Tracking] Error fetching path AAs:', e);
+
+      if (retryCount < MAX_RETRIES) {
+        console.log('[FC Labor Tracking] Error, retrying in ' + (2 + retryCount * 2) + 's...');
+        await sleep((2 + retryCount * 2) * 1000);
+        return refreshPathAAs(retryCount + 1);
+      }
+
       if (pathList) {
         pathList.textContent = '';
         const empty = document.createElement('div');
