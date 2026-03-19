@@ -20,6 +20,9 @@
   // Track current MPV check result to block submission if needed
   let currentMpvCheckResult = null;
 
+  // Bypass flag - when true, native form interception allows submission through
+  let bypassingInterception = false;
+
   // Track pending badge lookup while waiting for FCLM navigation
   let pendingBadgeLookup = null;
 
@@ -897,7 +900,13 @@
 
     try {
       showPanelMessage('Submitting badge...', 'info');
-      await handleBadgeIdInput(badgeId);
+      // Set bypass so native form interception allows this through
+      bypassingInterception = true;
+      try {
+        await handleBadgeIdInput(badgeId);
+      } finally {
+        setTimeout(() => { bypassingInterception = false; }, 500);
+      }
       showPanelMessage('Badge added!', 'success');
       input.value = '';
       hideAssociateInfo();
@@ -932,7 +941,6 @@
     // Track the last badge we processed to avoid duplicate lookups
     let lastProcessedBadge = '';
     let isProcessing = false;
-    let bypassingInterception = false; // Global bypass flag for our own submissions
     let lookupDoneForBadge = ''; // Track which badge has completed lookup (ready for 2nd Enter)
 
     // Lookup only - does NOT submit. Called on input change.
