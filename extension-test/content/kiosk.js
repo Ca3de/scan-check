@@ -933,6 +933,7 @@
     let lastProcessedBadge = '';
     let isProcessing = false;
     let bypassingInterception = false; // Global bypass flag for our own submissions
+    let lookupDoneForBadge = ''; // Track which badge has completed lookup (ready for 2nd Enter)
 
     // Lookup only - does NOT submit. Called on input change.
     async function lookupBadgeScan(badgeId) {
@@ -943,6 +944,7 @@
       console.log('[FC Labor Tracking] Looking up badge scan:', badgeId);
       isProcessing = true;
       lastProcessedBadge = badgeId;
+      lookupDoneForBadge = ''; // Reset - lookup not done yet
 
       // Sync to our panel input for display
       const panelInput = document.getElementById('fc-lt-badge');
@@ -955,12 +957,15 @@
         showPanelMessage('Checking MPV status...', 'info');
         await lookupAssociate(badgeId);
 
-        // Show result but wait for Enter to submit
+        // Mark lookup as done for this badge
+        lookupDoneForBadge = badgeId;
+
+        // Show result but wait for second Enter to submit
         if (currentMpvCheckResult && currentMpvCheckResult.hasMpvRisk) {
           console.log('[FC Labor Tracking] MPV BLOCKED');
-          showPanelMessage('🚫 MPV Risk - Press Enter blocked!', 'error');
+          showPanelMessage('🚫 MPV Risk - Submission blocked!', 'error');
         } else {
-          console.log('[FC Labor Tracking] MPV CLEARED - waiting for Enter to submit');
+          console.log('[FC Labor Tracking] MPV CLEARED - press Enter again to submit');
           showPanelMessage('✓ Cleared - Press Enter to submit', 'success');
         }
       } catch (error) {
@@ -1030,8 +1035,9 @@
       }
     }, 150));
 
-    // Block Enter in native input - never auto-submit from native box
-    // User must scan via extension input for auto-submit
+    // Two-step Enter flow for native input:
+    // 1st Enter (from scanner or manual): do MPV lookup, show result
+    // 2nd Enter: if MPV cleared, actually submit the badge
     nativeBadgeInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         if (!extensionEnabled) {
@@ -1039,16 +1045,54 @@
           return;
         }
 
-        // Block native submit entirely - lookup only
+        // Always block the native form submit
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
 
         const badgeId = nativeBadgeInput.value.trim();
-        if (badgeId.length >= 3) {
-          console.log('[FC Labor Tracking] Enter in native input - lookup only, no submit');
-          lookupBadgeScan(badgeId);
+        if (badgeId.length < 3) return;
+
+        // Check if lookup is already done for this badge (2nd Enter)
+        if (lookupDoneForBadge === badgeId && !isProcessing) {
+          // MPV blocked - don't submit
+          if (currentMpvCheckResult && currentMpvCheckResult.hasMpvRisk) {
+            console.log('[FC Labor Tracking] 2nd Enter - MPV BLOCKED, not submitting');
+            showPanelMessage('🚫 MPV Risk - Cannot submit!', 'error');
+            const infoDiv = document.getElementById('fc-lt-associate-info');
+            if (infoDiv) {
+              infoDiv.style.transform = 'scale(1.05)';
+              setTimeout(() => { infoDiv.style.transform = 'scale(1)'; }, 200);
+            }
+            return;
+          }
+
+          // MPV cleared - submit on 2nd Enter
+          console.log('[FC Labor Tracking] 2nd Enter - MPV cleared, submitting badge');
+          showPanelMessage('✓ Submitting...', 'success');
+
+          const panelInput = document.getElementById('fc-lt-badge');
+          lookupDoneForBadge = '';
+          lastProcessedBadge = '';
+
+          actuallySubmitBadge(badgeId).then(() => {
+            showPanelMessage('Badge added!', 'success');
+            nativeBadgeInput.value = '';
+            if (panelInput) panelInput.value = '';
+            hideAssociateInfo();
+            currentMpvCheckResult = null;
+
+            setTimeout(() => {
+              showPanelMessage('Ready for next badge', 'info');
+              nativeBadgeInput.focus();
+            }, 800);
+          });
+          return;
         }
+
+        // 1st Enter - do lookup only
+        console.log('[FC Labor Tracking] 1st Enter - doing MPV lookup');
+        lookupBadgeScan(badgeId);
       }
     }, true);
 
@@ -1089,12 +1133,38 @@
           return;
         }
 
-        // Block the click - native input never auto-submits
-        console.log('[FC Labor Tracking] Done button BLOCKED - use extension input to scan');
         e.preventDefault();
         e.stopPropagation();
 
-        // Just do lookup if not already done
+        // Same two-step flow as Enter key
+        if (lookupDoneForBadge === badgeId && !isProcessing) {
+          if (currentMpvCheckResult && currentMpvCheckResult.hasMpvRisk) {
+            console.log('[FC Labor Tracking] Done button - MPV BLOCKED');
+            showPanelMessage('🚫 MPV Risk - Cannot submit!', 'error');
+            return;
+          }
+
+          console.log('[FC Labor Tracking] Done button - MPV cleared, submitting');
+          showPanelMessage('✓ Submitting...', 'success');
+          const panelInput = document.getElementById('fc-lt-badge');
+          lookupDoneForBadge = '';
+          lastProcessedBadge = '';
+
+          actuallySubmitBadge(badgeId).then(() => {
+            showPanelMessage('Badge added!', 'success');
+            nativeBadgeInput.value = '';
+            if (panelInput) panelInput.value = '';
+            hideAssociateInfo();
+            currentMpvCheckResult = null;
+            setTimeout(() => {
+              showPanelMessage('Ready for next badge', 'info');
+              nativeBadgeInput.focus();
+            }, 800);
+          });
+          return;
+        }
+
+        // First click - do lookup
         if (!isProcessing) {
           lookupBadgeScan(badgeId);
         }
