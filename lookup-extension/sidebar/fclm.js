@@ -51,6 +51,21 @@
   // or another label element, or a too-long run that suggests we walked into
   // an unrelated section. The result is trimmed and de-colonned.
   function extractValueAfter(labelEl) {
+    // Definition list: <dt>Label</dt> ... <dd>Value</dd> — the <dd> *is*
+    // the value, not a block boundary.
+    if (labelEl.tagName === 'DT') {
+      let s = labelEl.nextElementSibling;
+      while (s && s.tagName !== 'DD' && !isLabelLikeElement(s)) {
+        s = s.nextElementSibling;
+      }
+      if (s && s.tagName === 'DD') {
+        let v = (s.textContent || '').trim().replace(/\s+/g, ' ');
+        if (v.length > 200) v = v.slice(0, 200);
+        return v;
+      }
+      return '';
+    }
+
     let text = '';
     let node = labelEl.nextSibling;
     while (node) {
@@ -66,7 +81,6 @@
       node = node.nextSibling;
     }
     text = text.replace(/^[:\s]+/, '').replace(/\s+$/, '');
-    // Safety: collapse internal whitespace, cap obviously runaway values.
     text = text.replace(/\s+/g, ' ');
     if (text.length > 200) text = text.slice(0, 200);
     return text;
@@ -116,15 +130,25 @@
     return result;
   }
 
+  // The empDetailCard title renders as "Lastname,Firstname (login)" inside
+  // a .fold-control span. Strip the trailing "(login)" to get the name.
   function scrapeNameFallback(doc) {
+    const card = doc.querySelector('.empDetailCard .fold-control, .empDetailCard .title');
+    if (card) {
+      const raw = (card.textContent || '').trim().replace(/\s+/g, ' ');
+      const m = raw.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+      if (m && /,/.test(m[1])) return m[1].trim();
+      if (/,/.test(raw)) return raw.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    }
+    // Photo alt attribute is also "Lastname,Firstname".
+    const photo = doc.querySelector('.badgePhoto img[alt]');
+    if (photo) {
+      const alt = (photo.getAttribute('alt') || '').trim();
+      if (/,/.test(alt)) return alt;
+    }
     const title = (doc.querySelector('title')?.textContent || '').trim();
     const titleMatch = title.match(/[-:]\s*([A-Za-z][A-Za-z'\-]+\s*,\s*[A-Za-z][A-Za-z'\- ]+)\s*$/);
     if (titleMatch) return titleMatch[1].trim();
-    const headers = doc.querySelectorAll('h1, h2, h3, .employee-name');
-    for (const h of headers) {
-      const t = (h.textContent || '').trim();
-      if (/^[A-Za-z][A-Za-z'\-]+\s*,\s*[A-Za-z][A-Za-z'\- ]+$/.test(t)) return t;
-    }
     return '';
   }
 
