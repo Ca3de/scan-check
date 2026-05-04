@@ -1,14 +1,7 @@
-// Sidebar UI controller.
-//
-// FCLM accepts login, badge, or Empl ID as the `employeeId` query param, so
-// "auto-detect" simply forwards the scanned value as-is. The input-type
-// dropdowns are kept for clarity (and for CSV column meaning), but they
-// don't change the network call.
+// Sidebar UI controller. All FCLM fetching/parsing happens here via FCLM.lookup().
 
 (function () {
   'use strict';
-
-  const api = typeof browser !== 'undefined' ? browser : chrome;
 
   const FIELD_LABELS = {
     login: 'Login',
@@ -26,6 +19,35 @@
   const RECENT_KEY = 'aaLookup.recent';
   const SETTINGS_KEY = 'aaLookup.settings';
   const MAX_RECENT = 50;
+  const REQUEST_DELAY_MS = 400;
+  const CACHE_TTL_MS = 10 * 60 * 1000;
+  const MAX_CACHE_ENTRIES = 1000;
+
+  // ---------- in-memory cache ----------
+  const cache = new Map();
+
+  function cacheGet(key) {
+    const e = cache.get(key);
+    if (!e) return null;
+    if (Date.now() - e.ts > CACHE_TTL_MS) { cache.delete(key); return null; }
+    return e.value;
+  }
+
+  function cacheSet(key, value) {
+    if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value);
+    cache.set(key, { value, ts: Date.now() });
+  }
+
+  async function lookupCached(idValue, warehouseId, useCache = true) {
+    const k = `${warehouseId}::${idValue}`;
+    if (useCache) {
+      const hit = cacheGet(k);
+      if (hit) return { ...hit, cached: true };
+    }
+    const res = await window.FCLM.lookup(idValue, warehouseId);
+    if (res.ok) cacheSet(k, res);
+    return res;
+  }
 
   // ---------- tabs ----------
   document.querySelectorAll('.tab').forEach(btn => {
@@ -40,17 +62,11 @@
 
   // ---------- settings persistence ----------
   function loadSettings() {
-    try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch (_) {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); }
+    catch (_) { return {}; }
   }
-
   function saveSettings(patch) {
-    const s = { ...loadSettings(), ...patch };
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
   }
 
   const warehouseInput = document.getElementById('warehouseId');
@@ -59,12 +75,8 @@
   warehouseInput.addEventListener('change', () => {
     saveSettings({ warehouseId: warehouseInput.value.trim() || 'IND8' });
   });
+  function getWarehouse() { return (warehouseInput.value || 'IND8').trim(); }
 
-  function getWarehouse() {
-    return (warehouseInput.value || 'IND8').trim();
-  }
-
-  // Restore field-checkbox state per fieldset.
   document.querySelectorAll('fieldset.output-fields').forEach(fs => {
     const tabId = fs.closest('.tab-panel').id;
     const stored = settings[`fields.${tabId}`];
@@ -92,20 +104,13 @@
 
   async function doSingleLookup() {
     const value = singleInput.value.trim();
-    if (!value) {
-      renderError(singleResult, 'Enter or scan a value');
-      return;
-    }
+    if (!value) { renderError(singleResult, 'Enter or scan a value'); return; }
     singleBtn.disabled = true;
     singleResult.className = 'result';
     singleResult.textContent = 'Looking up...';
     let resp;
     try {
-      resp = await sendRuntimeMessage({
-        action: 'singleLookup',
-        idValue: value,
-        warehouseId: getWarehouse()
-      });
+      resp = await lookupCached(value, getWarehouse(), true);
     } catch (err) {
       renderError(singleResult, err.message);
       singleBtn.disabled = false;
@@ -118,25 +123,17 @@
       pushRecent({ input: value, error: resp?.error || 'Lookup failed' });
       return;
     }
-
-    const fields = selectedFields('tab-single');
-    renderFields(singleResult, resp.fields, fields, resp.cached);
+    renderFields(singleResult, resp.fields, selectedFields('tab-single'), resp.cached);
     pushRecent({ input: value, fields: resp.fields, cached: !!resp.cached });
-
-    // Select all so the next scan replaces the value.
     singleInput.select();
   }
 
   singleBtn.addEventListener('click', doSingleLookup);
   singleInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      doSingleLookup();
-    }
+    if (e.key === 'Enter') { e.preventDefault(); doSingleLookup(); }
   });
-
-  document.getElementById('single-clear-cache').addEventListener('click', async () => {
-    await sendRuntimeMessage({ action: 'clearCache' });
+  document.getElementById('single-clear-cache').addEventListener('click', () => {
+    cache.clear();
     singleResult.className = 'result';
     singleResult.textContent = 'Cache cleared';
   });
@@ -146,8 +143,8 @@
     container.innerHTML = '';
     let any = false;
     selected.forEach(key => {
-      const value = fields[key];
-      if (!value) return;
+      const v = fields[key];
+      if (!v) return;
       any = true;
       const row = document.createElement('div');
       row.className = 'field-row';
@@ -156,9 +153,8 @@
       lbl.textContent = FIELD_LABELS[key] || key;
       const val = document.createElement('span');
       val.className = 'field-value';
-      val.textContent = value;
-      row.appendChild(lbl);
-      row.appendChild(val);
+      val.textContent = v;
+      row.appendChild(lbl); row.appendChild(val);
       container.appendChild(row);
     });
     if (!any) {
@@ -177,43 +173,22 @@
     container.textContent = msg;
   }
 
-  function sendRuntimeMessage(message) {
-    return new Promise((resolve, reject) => {
-      try {
-        const cb = (resp) => {
-          const err = api.runtime.lastError;
-          if (err) reject(new Error(err.message));
-          else resolve(resp);
-        };
-        const ret = api.runtime.sendMessage(message, cb);
-        if (ret && typeof ret.then === 'function') ret.then(resolve, reject);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
   // ---------- recent ----------
   function loadRecent() {
     try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); }
     catch (_) { return []; }
   }
-
   function pushRecent(entry) {
     const list = loadRecent();
     list.unshift({ ts: Date.now(), ...entry });
     while (list.length > MAX_RECENT) list.pop();
     localStorage.setItem(RECENT_KEY, JSON.stringify(list));
   }
-
   function renderRecent() {
     const container = document.getElementById('recent-list');
     container.innerHTML = '';
     const items = loadRecent();
-    if (!items.length) {
-      container.textContent = 'No recent lookups.';
-      return;
-    }
+    if (!items.length) { container.textContent = 'No recent lookups.'; return; }
     items.forEach(item => {
       const div = document.createElement('div');
       div.className = 'recent-item';
@@ -238,12 +213,10 @@
       container.appendChild(div);
     });
   }
-
   document.getElementById('recent-clear').addEventListener('click', () => {
     localStorage.removeItem(RECENT_KEY);
     renderRecent();
   });
-
   document.getElementById('recent-export').addEventListener('click', () => {
     const items = loadRecent();
     if (!items.length) return;
@@ -252,12 +225,10 @@
     items.forEach(it => {
       const f = it.fields || {};
       rows.push([
-        new Date(it.ts).toISOString(),
-        it.input || '',
+        new Date(it.ts).toISOString(), it.input || '',
         f.login || '', f.badge || '', f.employeeId || '', f.name || '',
         f.status || '', f.manager || '', f.shift || '', f.deptId || '',
-        f.location || '', f.agency || '',
-        it.error || ''
+        f.location || '', f.agency || '', it.error || ''
       ]);
     });
     downloadCSV(window.CSVUtil.serializeCSV(rows), 'aa-lookups.csv');
@@ -267,20 +238,16 @@
     const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   // ---------- batch CSV ----------
   let csvHeaders = [];
   let csvRows = [];
-  let enrichedRows = null; // populated as batch runs
-  let batchPort = null;
-  let currentBatchId = null;
+  let enrichedRows = null;
+  let cancelBatch = false;
 
   const csvFileInput = document.getElementById('csv-file');
   const csvConfig = document.getElementById('csv-config');
@@ -299,10 +266,7 @@
     if (!file) return;
     const text = await file.text();
     const rows = window.CSVUtil.parseCSV(text);
-    if (!rows.length) {
-      alert('CSV is empty');
-      return;
-    }
+    if (!rows.length) { alert('CSV is empty'); return; }
     csvHeaders = rows[0];
     csvRows = rows.slice(1);
     csvInputColumn.innerHTML = '';
@@ -312,7 +276,6 @@
       opt.textContent = h || `(column ${i + 1})`;
       csvInputColumn.appendChild(opt);
     });
-    // Heuristic: pick a column whose header looks like an id field.
     const guess = csvHeaders.findIndex(h =>
       /login|badge|empl|employee\s*id|alias|name/i.test(h || '')
     );
@@ -324,29 +287,18 @@
     enrichedRows = null;
   });
 
-  batchStartBtn.addEventListener('click', () => {
-    if (!csvRows.length) {
-      alert('Load a CSV first');
-      return;
-    }
+  batchStartBtn.addEventListener('click', async () => {
+    if (!csvRows.length) { alert('Load a CSV first'); return; }
     const colIdx = parseInt(csvInputColumn.value, 10);
     const fieldKeys = selectedFields('tab-batch');
-    if (!fieldKeys.length) {
-      alert('Select at least one output field');
-      return;
-    }
+    if (!fieldKeys.length) { alert('Select at least one output field'); return; }
 
-    // Build new header row: original headers + selected output columns
-    // (skip output columns whose name collides with the input column name).
     const outHeaders = csvHeaders.slice();
     const fieldColIndexes = {};
     fieldKeys.forEach(key => {
       const colName = FIELD_LABELS[key];
       let idx = outHeaders.findIndex(h => (h || '').trim().toLowerCase() === colName.toLowerCase());
-      if (idx < 0) {
-        outHeaders.push(colName);
-        idx = outHeaders.length - 1;
-      }
+      if (idx < 0) { outHeaders.push(colName); idx = outHeaders.length - 1; }
       fieldColIndexes[key] = idx;
     });
 
@@ -357,19 +309,14 @@
       enrichedRows.push(padded);
     });
 
-    // Items to look up.
     const items = [];
     csvRows.forEach((r, rowIndex) => {
       const v = (r[colIdx] || '').trim();
       if (v) items.push({ value: v, rowIndex });
     });
+    if (!items.length) { alert('No values found in the chosen column'); return; }
 
-    if (!items.length) {
-      alert('No values found in the chosen column');
-      return;
-    }
-
-    // UI state.
+    cancelBatch = false;
     batchStartBtn.classList.add('hidden');
     batchCancelBtn.classList.remove('hidden');
     batchProgressWrap.classList.remove('hidden');
@@ -379,44 +326,37 @@
     batchErrorSummary.textContent = '';
 
     let errorCount = 0;
-    currentBatchId = `b_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    batchPort = api.runtime.connect({ name: 'aaLookup' });
-    batchPort.onMessage.addListener((msg) => {
-      if (msg.batchId !== currentBatchId) return;
-      if (msg.type === 'batchProgress') {
-        const pct = Math.round((msg.done / msg.total) * 100);
-        batchProgressFill.style.width = pct + '%';
-        batchProgressText.textContent = `${msg.done} / ${msg.total}`;
-        if (msg.result?.ok) {
-          const target = enrichedRows[msg.rowIndex + 1];
-          fieldKeys.forEach(k => {
-            target[fieldColIndexes[k]] = msg.result.fields[k] || '';
-          });
-        } else {
-          errorCount++;
-          batchErrorSummary.textContent = `${errorCount} error${errorCount === 1 ? '' : 's'} so far`;
-        }
-      } else if (msg.type === 'batchDone' || msg.type === 'batchCancelled') {
-        batchStartBtn.classList.remove('hidden');
-        batchCancelBtn.classList.add('hidden');
-        batchDownloadWrap.classList.remove('hidden');
-        try { batchPort.disconnect(); } catch (_) {}
-        batchPort = null;
+    const wh = getWarehouse();
+    for (let i = 0; i < items.length; i++) {
+      if (cancelBatch) break;
+      const item = items[i];
+      let res;
+      try {
+        res = await lookupCached(item.value, wh, true);
+      } catch (err) {
+        res = { ok: false, error: err.message, input: item.value };
       }
-    });
-    batchPort.postMessage({
-      type: 'startBatch',
-      batchId: currentBatchId,
-      items,
-      warehouseId: getWarehouse()
-    });
+      if (res.ok) {
+        const target = enrichedRows[item.rowIndex + 1];
+        fieldKeys.forEach(k => { target[fieldColIndexes[k]] = res.fields[k] || ''; });
+      } else {
+        errorCount++;
+        batchErrorSummary.textContent = `${errorCount} error${errorCount === 1 ? '' : 's'} so far`;
+      }
+      const done = i + 1;
+      batchProgressFill.style.width = Math.round((done / items.length) * 100) + '%';
+      batchProgressText.textContent = `${done} / ${items.length}`;
+      if (i < items.length - 1 && !res.cached) {
+        await new Promise(r => setTimeout(r, REQUEST_DELAY_MS));
+      }
+    }
+
+    batchStartBtn.classList.remove('hidden');
+    batchCancelBtn.classList.add('hidden');
+    batchDownloadWrap.classList.remove('hidden');
   });
 
-  batchCancelBtn.addEventListener('click', () => {
-    if (batchPort && currentBatchId) {
-      batchPort.postMessage({ type: 'cancelBatch', batchId: currentBatchId });
-    }
-  });
+  batchCancelBtn.addEventListener('click', () => { cancelBatch = true; });
 
   batchDownloadBtn.addEventListener('click', () => {
     if (!enrichedRows) return;
