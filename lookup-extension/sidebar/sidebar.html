@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FC AA Lookup</title>
+  <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>FC AA Lookup</h1>
+    <div class="warehouse">
+      <label for="warehouseId">Warehouse</label>
+      <input id="warehouseId" type="text" maxlength="8" value="IND8">
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="single">Single</button>
+    <button class="tab" data-tab="batch">Batch CSV</button>
+    <button class="tab" data-tab="recent">Recent</button>
+  </nav>
+
+  <section id="tab-single" class="tab-panel active">
+    <div class="form-row">
+      <label>I have</label>
+      <select id="single-input-type">
+        <option value="auto" selected>Auto-detect</option>
+        <option value="login">Login</option>
+        <option value="badge">Badge</option>
+        <option value="employeeId">Employee ID</option>
+        <option value="name">Name</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <label>Scan / type value</label>
+      <input id="single-input-value" type="text" placeholder="Scan or paste here" autofocus>
+    </div>
+
+    <fieldset class="output-fields">
+      <legend>Show fields</legend>
+      <label><input type="checkbox" data-field="login" checked> Login</label>
+      <label><input type="checkbox" data-field="badge" checked> Badge</label>
+      <label><input type="checkbox" data-field="employeeId" checked> Employee ID</label>
+      <label><input type="checkbox" data-field="name" checked> Name</label>
+      <label><input type="checkbox" data-field="status"> Status</label>
+      <label><input type="checkbox" data-field="manager"> Manager</label>
+      <label><input type="checkbox" data-field="shift"> Shift</label>
+      <label><input type="checkbox" data-field="deptId"> Dept ID</label>
+      <label><input type="checkbox" data-field="location"> Location</label>
+      <label><input type="checkbox" data-field="agency"> Agency</label>
+    </fieldset>
+
+    <div class="button-row">
+      <button id="single-lookup-btn" class="primary">Look up</button>
+      <button id="single-clear-cache" class="link">Clear cache</button>
+    </div>
+
+    <div id="single-result" class="result"></div>
+  </section>
+
+  <section id="tab-batch" class="tab-panel">
+    <div class="form-row">
+      <label for="csv-file">CSV file</label>
+      <input id="csv-file" type="file" accept=".csv,text/csv">
+    </div>
+
+    <div id="csv-config" class="hidden">
+      <div class="form-row">
+        <label for="csv-input-column">Lookup column</label>
+        <select id="csv-input-column"></select>
+      </div>
+      <div class="form-row">
+        <label for="csv-input-type">Column contains</label>
+        <select id="csv-input-type">
+          <option value="auto" selected>Auto-detect per row</option>
+          <option value="login">Login</option>
+          <option value="badge">Badge</option>
+          <option value="employeeId">Employee ID</option>
+          <option value="name">Name</option>
+        </select>
+      </div>
+
+      <fieldset class="output-fields">
+        <legend>Add columns</legend>
+        <label><input type="checkbox" data-field="login" checked> Login</label>
+        <label><input type="checkbox" data-field="badge" checked> Badge</label>
+        <label><input type="checkbox" data-field="employeeId" checked> Employee ID</label>
+        <label><input type="checkbox" data-field="name" checked> Name</label>
+        <label><input type="checkbox" data-field="status"> Status</label>
+        <label><input type="checkbox" data-field="manager"> Manager</label>
+        <label><input type="checkbox" data-field="shift"> Shift</label>
+        <label><input type="checkbox" data-field="deptId"> Dept ID</label>
+        <label><input type="checkbox" data-field="location"> Location</label>
+        <label><input type="checkbox" data-field="agency"> Agency</label>
+      </fieldset>
+
+      <div class="button-row">
+        <button id="batch-start" class="primary">Run batch</button>
+        <button id="batch-cancel" class="secondary hidden">Cancel</button>
+      </div>
+
+      <div id="batch-progress-wrap" class="hidden">
+        <div class="progress-bar"><div id="batch-progress-fill"></div></div>
+        <div id="batch-progress-text">0 / 0</div>
+        <div id="batch-error-summary"></div>
+      </div>
+
+      <div id="batch-download-wrap" class="hidden">
+        <button id="batch-download" class="primary">Download enriched CSV</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-recent" class="tab-panel">
+    <div class="button-row">
+      <button id="recent-clear" class="secondary">Clear</button>
+      <button id="recent-export" class="secondary">Export CSV</button>
+    </div>
+    <div id="recent-list"></div>
+  </section>
+
+  <script src="csv.js"></script>
+  <script src="sidebar.js"></script>
+</body>
+</html>
