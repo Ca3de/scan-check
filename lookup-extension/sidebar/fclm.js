@@ -1,12 +1,18 @@
 // FCLM employee lookup — runs inside the sidebar page.
-// `host_permissions` covers fclm-portal.amazon.com, so fetch sends cookies.
+// The HTML fetch is delegated to the background, which executes it inside
+// an FCLM tab via chrome.scripting.executeScript. Parsing happens here
+// because the sidebar has DOMParser.
 
 (function (global) {
   'use strict';
 
-  const FIELD_LABELS = {
+  const api = typeof browser !== 'undefined' ? browser : chrome;
+
+  // Aliases are stored pre-normalized (lowercase, no whitespace/colons)
+  // so they match whatever normalizeLabel() produces from page text.
+  const RAW_LABELS = {
     login: ['login', 'user id', 'alias'],
-    employeeId: ['empl id', 'employee id', 'emp id', 'empid'],
+    employeeId: ['empl id', 'employee id', 'emp id', 'empid', 'emplid'],
     badge: ['badge', 'badge id', 'badgeid'],
     name: ['name', 'employee name', 'full name'],
     status: ['status'],
@@ -16,6 +22,15 @@
     location: ['location'],
     manager: ['manager']
   };
+
+  function normalizeLabel(text) {
+    return (text || '').replace(/[: \t\n\r]/g, '').toLowerCase();
+  }
+
+  // Build the actual lookup table with normalized aliases.
+  const FIELD_LABELS = Object.fromEntries(
+    Object.entries(RAW_LABELS).map(([k, v]) => [k, v.map(normalizeLabel)])
+  );
 
   const LABEL_TAGS = new Set(['B', 'STRONG', 'TH', 'DT', 'LABEL']);
   const BLOCK_TAGS = new Set(['BR', 'P', 'DIV', 'LI', 'TR', 'TD', 'TH', 'SECTION', 'ARTICLE', 'UL', 'OL', 'TABLE', 'HR']);
@@ -28,12 +43,9 @@
     return `https://fclm-portal.amazon.com/employee/timeDetails?${params.toString()}`;
   }
 
-  function normalizeLabel(text) {
-    return (text || '').replace(/[: \t\n\r]/g, '').toLowerCase();
-  }
-
   function matchFieldKey(label) {
     const norm = normalizeLabel(label);
+    if (!norm) return null;
     for (const [key, aliases] of Object.entries(FIELD_LABELS)) {
       if (aliases.includes(norm)) return key;
     }
@@ -160,21 +172,40 @@
     return false;
   }
 
+  function sendBg(message) {
+    return new Promise((resolve, reject) => {
+      try {
+        const cb = (resp) => {
+          const err = api.runtime.lastError;
+          if (err) reject(new Error(err.message));
+          else resolve(resp);
+        };
+        const ret = api.runtime.sendMessage(message, cb);
+        if (ret && typeof ret.then === 'function') ret.then(resolve, reject);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
   async function lookup(idValue, warehouseId) {
     const url = buildUrl(idValue, warehouseId);
     let resp;
     try {
-      resp = await fetch(url, { credentials: 'include' });
+      resp = await sendBg({ action: 'fclmFetch', url });
     } catch (err) {
-      return { ok: false, error: `Network error: ${err.message}`, input: idValue };
+      return { ok: false, error: `Background error: ${err.message}`, input: idValue };
+    }
+    if (!resp) {
+      return { ok: false, error: 'No response from background', input: idValue };
     }
     if (!resp.ok) {
-      return { ok: false, error: `HTTP ${resp.status}`, input: idValue };
+      return { ok: false, error: resp.error || `HTTP ${resp.status || '?'}`, input: idValue };
     }
-    const html = await resp.text();
+    const html = resp.html || '';
     const doc = new DOMParser().parseFromString(html, 'text/html');
 
-    if (looksLikeAuthPage(doc, resp.url)) {
+    if (looksLikeAuthPage(doc, resp.finalUrl || url)) {
       return { ok: false, error: 'Not logged in to FCLM — open fclm-portal.amazon.com and sign in', input: idValue };
     }
 
