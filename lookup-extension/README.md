@@ -49,15 +49,18 @@ the extension opens one in the background.
 ```
 lookup-extension/
 ├── manifest.json
-├── background/background.js     # service worker; tab routing, cache, batch queue
-├── content/fclm-lookup.js       # FCLM page scraper
+├── background/background.js     # service worker; opens side panel/sidebar
 ├── sidebar/
 │   ├── sidebar.html             # 3 tabs: Single / Batch CSV / Recent
 │   ├── sidebar.css
-│   ├── sidebar.js               # UI controller
+│   ├── sidebar.js               # UI controller; cache + batch queue
+│   ├── fclm.js                  # FCLM fetch + Employee Info parser
 │   └── csv.js                   # RFC4180-ish parser/serializer (no deps)
 └── icons/
 ```
+
+The sidebar fetches `fclm-portal.amazon.com` directly using the host
+permission, so no content script or proxy tab is needed.
 
 ## Notes & limitations
 

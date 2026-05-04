@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FC AA Lookup",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Look up Amazon FC associates by Login, Badge, Employee ID, or Name. Single lookups and CSV batch enrichment.",
   "author": "Ca3de",
   "homepage_url": "https://github.com/Ca3de/scan-check",
@@ -15,9 +15,7 @@
 
   "permissions": [
     "storage",
-    "tabs",
-    "scripting",
-    "sidePanel"
+    "tabs"
   ],
 
   "host_permissions": [
@@ -28,14 +26,6 @@
     "service_worker": "background/background.js",
     "scripts": ["background/background.js"]
   },
-
-  "content_scripts": [
-    {
-      "matches": ["*://fclm-portal.amazon.com/*"],
-      "js": ["content/fclm-lookup.js"],
-      "run_at": "document_idle"
-    }
-  ],
 
   "action": {
     "default_icon": {
