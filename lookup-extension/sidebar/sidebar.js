@@ -118,6 +118,7 @@
   const matchesCountEl = document.getElementById('matches-count');
 
   function clearMatches() {
+    enrichmentToken++; // cancel any in-flight enrichment
     matchListEl.innerHTML = '';
     matchesContainer.classList.add('hidden');
     matchesCountEl.textContent = '0 matches';
@@ -213,66 +214,108 @@
     pushRecent({ input: term, matchCount: matches.length });
   }
 
+  // Always-shown filterable fields. Selected output fields are layered on top.
+  const MATCH_BASE_FIELDS = ['name', 'manager', 'shift', 'status', 'deptId'];
+  const FILTER_FIELDS = ['name', 'manager', 'shift', 'status', 'deptId'];
+
+  // Increments on every new search; in-flight enrichment loops bail if their
+  // captured token no longer matches.
+  let enrichmentToken = 0;
+
+  function buildMatchItem(match, selected) {
+    const div = document.createElement('div');
+    div.className = 'match-item';
+    populateMatchItem(div, match, selected);
+    return div;
+  }
+
+  function populateMatchItem(div, match, selected) {
+    // Update filterable dataset attributes.
+    FILTER_FIELDS.forEach(k => {
+      div.dataset[k] = (match[k] || '').toLowerCase();
+    });
+    // Render rows: union of selected output fields and the base fields, in
+    // a stable order, deduplicated.
+    const order = [];
+    selected.forEach(k => { if (!order.includes(k)) order.push(k); });
+    MATCH_BASE_FIELDS.forEach(k => { if (!order.includes(k)) order.push(k); });
+
+    div.innerHTML = '';
+    order.forEach(key => {
+      const v = match[key];
+      if (!v) return;
+      const row = document.createElement('div');
+      row.className = 'match-row';
+      const lbl = document.createElement('span');
+      lbl.className = 'field-label';
+      lbl.textContent = FIELD_LABELS[key] || key;
+      const val = document.createElement('span');
+      val.className = 'field-value';
+      val.textContent = v;
+      row.appendChild(lbl); row.appendChild(val);
+      div.appendChild(row);
+    });
+  }
+
   function renderMatches(matches) {
     matchListEl.innerHTML = '';
     matchesCountEl.textContent = `${matches.length} matches`;
     matchesContainer.classList.remove('hidden');
     const fields = selectedFields('tab-single');
-    matches.forEach(m => {
-      const div = document.createElement('div');
-      div.className = 'match-item';
-      div.dataset.name = (m.name || '').toLowerCase();
-      div.dataset.manager = (m.manager || '').toLowerCase();
-      div.dataset.shift = (m.shift || '').toLowerCase();
-      div.dataset.status = (m.status || '').toLowerCase();
-      fields.forEach(key => {
-        const v = m[key];
-        if (!v) return;
-        const row = document.createElement('div');
-        row.className = 'match-row';
-        const lbl = document.createElement('span');
-        lbl.className = 'field-label';
-        lbl.textContent = FIELD_LABELS[key] || key;
-        const val = document.createElement('span');
-        val.className = 'field-value';
-        val.textContent = v;
-        row.appendChild(lbl); row.appendChild(val);
-        div.appendChild(row);
-      });
-      // Always show name + manager + shift + status if available, even if not selected,
-      // so the filters work meaningfully.
-      ['name', 'manager', 'shift', 'status'].forEach(key => {
-        if (fields.includes(key) || !m[key]) return;
-        const row = document.createElement('div');
-        row.className = 'match-row';
-        const lbl = document.createElement('span');
-        lbl.className = 'field-label';
-        lbl.textContent = FIELD_LABELS[key];
-        const val = document.createElement('span');
-        val.className = 'field-value';
-        val.textContent = m[key];
-        row.appendChild(lbl); row.appendChild(val);
-        div.appendChild(row);
-      });
+
+    const pairs = matches.map(m => {
+      const div = buildMatchItem(m, fields);
       matchListEl.appendChild(div);
+      return { match: m, el: div };
     });
+
     applyMatchFilters();
+
+    // Progressively enrich each match with full Employee Info so the
+    // Manager / Shift / Status / Dept ID filters actually work.
+    enrichMatchesProgressively(pairs, fields);
+  }
+
+  async function enrichMatchesProgressively(pairs, fields) {
+    const myToken = ++enrichmentToken;
+    const wh = getWarehouse();
+    for (const { match, el } of pairs) {
+      if (myToken !== enrichmentToken) return; // superseded by a new search
+      // Already complete? Skip.
+      if (FILTER_FIELDS.every(k => match[k])) continue;
+      const id = match.login || match.employeeId || match.badge;
+      if (!id) continue;
+
+      let detail;
+      try {
+        detail = await lookupCached(id, wh, true);
+      } catch (_) {
+        continue;
+      }
+      if (myToken !== enrichmentToken) return;
+      if (!detail?.ok) continue;
+
+      // Merge — don't overwrite values already present from the search row.
+      Object.entries(detail.fields).forEach(([k, v]) => {
+        if (v && !match[k]) match[k] = v;
+      });
+      populateMatchItem(el, match, fields);
+      applyMatchFilters();
+
+      if (!detail.cached) {
+        await new Promise(r => setTimeout(r, REQUEST_DELAY_MS));
+      }
+    }
   }
 
   function applyMatchFilters() {
-    const f = {
-      name: (document.getElementById('filter-name').value || '').trim().toLowerCase(),
-      manager: (document.getElementById('filter-manager').value || '').trim().toLowerCase(),
-      shift: (document.getElementById('filter-shift').value || '').trim().toLowerCase(),
-      status: (document.getElementById('filter-status').value || '').trim().toLowerCase()
-    };
+    const f = {};
+    FILTER_FIELDS.forEach(k => {
+      f[k] = (document.getElementById('filter-' + k.toLowerCase()).value || '').trim().toLowerCase();
+    });
     let visible = 0;
     matchListEl.querySelectorAll('.match-item').forEach(el => {
-      const hide =
-        (f.name && !el.dataset.name.includes(f.name)) ||
-        (f.manager && !el.dataset.manager.includes(f.manager)) ||
-        (f.shift && !el.dataset.shift.includes(f.shift)) ||
-        (f.status && !el.dataset.status.includes(f.status));
+      const hide = FILTER_FIELDS.some(k => f[k] && !(el.dataset[k] || '').includes(f[k]));
       el.classList.toggle('hidden-by-filter', !!hide);
       if (!hide) visible += 1;
     });
@@ -282,8 +325,9 @@
       : `${visible} of ${total} matches`;
   }
 
-  ['filter-name', 'filter-manager', 'filter-shift', 'filter-status'].forEach(id => {
-    document.getElementById(id).addEventListener('input', applyMatchFilters);
+  FILTER_FIELDS.forEach(k => {
+    const el = document.getElementById('filter-' + k.toLowerCase());
+    if (el) el.addEventListener('input', applyMatchFilters);
   });
   document.getElementById('matches-clear').addEventListener('click', clearMatches);
 
