@@ -227,5 +227,122 @@
     return { ok: true, input: idValue, fields };
   }
 
-  global.FCLM = { lookup };
+  // ============== Name search ==============
+
+  function buildSearchUrl(term, warehouseId) {
+    const params = new URLSearchParams({
+      term,
+      warehouseId: warehouseId || 'IND8',
+      startHourIntraday1: '0',
+      startMinuteIntraday1: '0',
+      startHourIntraday2: '0',
+      startMinuteIntraday2: '0',
+      startHourIntraday3: '18',
+      startMinuteIntraday3: '0',
+      startHourIntraday4: '6',
+      startMinuteIntraday4: '0'
+    });
+    return `https://fclm-portal.amazon.com/search?${params.toString()}`;
+  }
+
+  function getTableHeaderTexts(table) {
+    const thead = table.querySelector('thead');
+    if (thead) {
+      const cells = thead.querySelectorAll('th, td');
+      if (cells.length) return Array.from(cells).map(c => (c.textContent || '').trim());
+    }
+    const firstRow = table.querySelector('tr');
+    if (!firstRow) return [];
+    return Array.from(firstRow.querySelectorAll('th, td')).map(c => (c.textContent || '').trim());
+  }
+
+  function parseSearchResults(doc) {
+    const tables = Array.from(doc.querySelectorAll('table'));
+    const all = [];
+    for (const table of tables) {
+      const headers = getTableHeaderTexts(table);
+      if (!headers.length) continue;
+      const headerKeys = headers.map(h => matchFieldKey(h));
+      const knownCount = headerKeys.filter(k => !!k).length;
+      if (knownCount < 2) continue;
+
+      const tbody = table.querySelector('tbody') || table;
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      const skipFirst = !table.querySelector('thead');
+
+      for (let i = skipFirst ? 1 : 0; i < rows.length; i++) {
+        const cells = Array.from(rows[i].querySelectorAll('td, th'));
+        if (!cells.length) continue;
+        const obj = {};
+        headerKeys.forEach((key, idx) => {
+          if (!key || !cells[idx]) return;
+          const text = (cells[idx].textContent || '').trim().replace(/\s+/g, ' ');
+          if (text) obj[key] = text;
+        });
+        // Pull login/employeeId from any timeDetails link in the row.
+        const link = rows[i].querySelector('a[href*="/employee/timeDetails"]');
+        if (link) {
+          const m = (link.getAttribute('href') || '').match(/employeeId=([^&]+)/);
+          if (m) {
+            const v = decodeURIComponent(m[1]);
+            if (/^\d+$/.test(v) && !obj.employeeId) obj.employeeId = v;
+            else if (/^[a-z][a-z0-9._-]*$/i.test(v) && !obj.login) obj.login = v;
+          }
+        }
+        if (obj.name || obj.login || obj.employeeId || obj.badge) all.push(obj);
+      }
+      if (all.length) return all;
+    }
+
+    // Fallback: scrape any timeDetails links on the page.
+    const links = Array.from(doc.querySelectorAll('a[href*="/employee/timeDetails"]'));
+    const seen = new Set();
+    for (const a of links) {
+      const text = (a.textContent || '').trim().replace(/\s+/g, ' ');
+      const m = (a.getAttribute('href') || '').match(/employeeId=([^&]+)/);
+      if (!m) continue;
+      const v = decodeURIComponent(m[1]);
+      if (seen.has(v)) continue;
+      seen.add(v);
+      const obj = {};
+      if (/,/.test(text)) obj.name = text;
+      if (/^\d+$/.test(v)) obj.employeeId = v;
+      else if (/^[a-z][a-z0-9._-]*$/i.test(v)) obj.login = v;
+      if (Object.keys(obj).length) all.push(obj);
+    }
+    return all;
+  }
+
+  async function searchByName(term, warehouseId) {
+    const url = buildSearchUrl(term, warehouseId);
+    let resp;
+    try {
+      resp = await sendBg({ action: 'fclmFetch', url });
+    } catch (err) {
+      return { ok: false, error: `Background error: ${err.message}`, term };
+    }
+    if (!resp || !resp.ok) {
+      return { ok: false, error: resp?.error || `HTTP ${resp?.status || '?'}`, term };
+    }
+    const doc = new DOMParser().parseFromString(resp.html || '', 'text/html');
+    if (looksLikeAuthPage(doc, resp.finalUrl || url)) {
+      return { ok: false, error: 'Not logged in to FCLM — open fclm-portal.amazon.com and sign in', term };
+    }
+    const matches = parseSearchResults(doc);
+    return { ok: true, term, matches };
+  }
+
+  // Heuristic: does this look like a free-text name (vs. login/badge/empl id)?
+  // - Pure digits → ID
+  // - Lowercase login-shape (e.g. "oladeisr") → ID
+  // - Anything else with letters (commas, spaces, leading uppercase) → name
+  function looksLikeName(input) {
+    const v = (input || '').trim();
+    if (!v) return false;
+    if (/^\d+$/.test(v)) return false;
+    if (/^[a-z][a-z0-9._-]{2,15}$/.test(v)) return false;
+    return /[A-Za-z]/.test(v);
+  }
+
+  global.FCLM = { lookup, searchByName, looksLikeName };
 })(window);

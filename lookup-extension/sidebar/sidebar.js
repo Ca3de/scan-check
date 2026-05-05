@@ -39,12 +39,23 @@
   }
 
   async function lookupCached(idValue, warehouseId, useCache = true) {
-    const k = `${warehouseId}::${idValue}`;
+    const k = `lookup::${warehouseId}::${idValue}`;
     if (useCache) {
       const hit = cacheGet(k);
       if (hit) return { ...hit, cached: true };
     }
     const res = await window.FCLM.lookup(idValue, warehouseId);
+    if (res.ok) cacheSet(k, res);
+    return res;
+  }
+
+  async function searchCached(term, warehouseId, useCache = true) {
+    const k = `search::${warehouseId}::${term.toLowerCase()}`;
+    if (useCache) {
+      const hit = cacheGet(k);
+      if (hit) return { ...hit, cached: true };
+    }
+    const res = await window.FCLM.searchByName(term, warehouseId);
     if (res.ok) cacheSet(k, res);
     return res;
   }
@@ -99,25 +110,55 @@
 
   // ---------- single lookup ----------
   const singleInput = document.getElementById('single-input-value');
+  const singleInputType = document.getElementById('single-input-type');
   const singleResult = document.getElementById('single-result');
   const singleBtn = document.getElementById('single-lookup-btn');
+  const matchesContainer = document.getElementById('single-matches');
+  const matchListEl = document.getElementById('match-list');
+  const matchesCountEl = document.getElementById('matches-count');
+
+  function clearMatches() {
+    enrichmentToken++; // cancel any in-flight enrichment
+    matchListEl.innerHTML = '';
+    matchesContainer.classList.add('hidden');
+    matchesCountEl.textContent = '0 matches';
+  }
+
+  function shouldSearchByName(value) {
+    const explicit = singleInputType.value;
+    if (explicit === 'name') return true;
+    if (explicit === 'auto') return window.FCLM.looksLikeName(value);
+    return false;
+  }
 
   async function doSingleLookup() {
     const value = singleInput.value.trim();
     if (!value) { renderError(singleResult, 'Enter or scan a value'); return; }
     singleBtn.disabled = true;
+    clearMatches();
     singleResult.className = 'result';
-    singleResult.textContent = 'Looking up...';
+    singleResult.textContent = shouldSearchByName(value) ? 'Searching...' : 'Looking up...';
+
+    try {
+      if (shouldSearchByName(value)) {
+        await runNameSearch(value);
+      } else {
+        await runIdLookup(value);
+      }
+    } finally {
+      singleBtn.disabled = false;
+      singleInput.select();
+    }
+  }
+
+  async function runIdLookup(value) {
     let resp;
     try {
       resp = await lookupCached(value, getWarehouse(), true);
     } catch (err) {
       renderError(singleResult, err.message);
-      singleBtn.disabled = false;
       return;
     }
-    singleBtn.disabled = false;
-
     if (!resp?.ok) {
       renderError(singleResult, resp?.error || 'Lookup failed');
       pushRecent({ input: value, error: resp?.error || 'Lookup failed' });
@@ -125,8 +166,170 @@
     }
     renderFields(singleResult, resp.fields, selectedFields('tab-single'), resp.cached);
     pushRecent({ input: value, fields: resp.fields, cached: !!resp.cached });
-    singleInput.select();
   }
+
+  async function runNameSearch(term) {
+    let resp;
+    try {
+      resp = await searchCached(term, getWarehouse(), true);
+    } catch (err) {
+      renderError(singleResult, err.message);
+      return;
+    }
+    if (!resp?.ok) {
+      renderError(singleResult, resp?.error || 'Search failed');
+      pushRecent({ input: term, error: resp?.error || 'Search failed' });
+      return;
+    }
+    const matches = resp.matches || [];
+    if (!matches.length) {
+      renderError(singleResult, 'No matches');
+      pushRecent({ input: term, error: 'No matches' });
+      return;
+    }
+
+    // Single match → behave like a regular lookup, enriching with full fields.
+    if (matches.length === 1) {
+      singleResult.className = 'result';
+      singleResult.textContent = 'Loading details...';
+      const id = matches[0].login || matches[0].employeeId || matches[0].badge;
+      if (id) {
+        const detail = await lookupCached(id, getWarehouse(), true);
+        if (detail?.ok) {
+          renderFields(singleResult, detail.fields, selectedFields('tab-single'), detail.cached);
+          pushRecent({ input: term, fields: detail.fields, cached: !!detail.cached });
+          return;
+        }
+      }
+      // Fall back: just show what the search row gave us.
+      renderFields(singleResult, matches[0], selectedFields('tab-single'), false);
+      pushRecent({ input: term, fields: matches[0] });
+      return;
+    }
+
+    // Multiple matches → show the list with filters.
+    singleResult.className = 'result';
+    singleResult.textContent = `${matches.length} matches — filter below`;
+    renderMatches(matches);
+    pushRecent({ input: term, matchCount: matches.length });
+  }
+
+  // Always-shown filterable fields. Selected output fields are layered on top.
+  const MATCH_BASE_FIELDS = ['name', 'manager', 'shift', 'status', 'deptId'];
+  const FILTER_FIELDS = ['name', 'manager', 'shift', 'status', 'deptId'];
+
+  // Increments on every new search; in-flight enrichment loops bail if their
+  // captured token no longer matches.
+  let enrichmentToken = 0;
+
+  function buildMatchItem(match, selected) {
+    const div = document.createElement('div');
+    div.className = 'match-item';
+    populateMatchItem(div, match, selected);
+    return div;
+  }
+
+  function populateMatchItem(div, match, selected) {
+    // Update filterable dataset attributes.
+    FILTER_FIELDS.forEach(k => {
+      div.dataset[k] = (match[k] || '').toLowerCase();
+    });
+    // Render rows: union of selected output fields and the base fields, in
+    // a stable order, deduplicated.
+    const order = [];
+    selected.forEach(k => { if (!order.includes(k)) order.push(k); });
+    MATCH_BASE_FIELDS.forEach(k => { if (!order.includes(k)) order.push(k); });
+
+    div.innerHTML = '';
+    order.forEach(key => {
+      const v = match[key];
+      if (!v) return;
+      const row = document.createElement('div');
+      row.className = 'match-row';
+      const lbl = document.createElement('span');
+      lbl.className = 'field-label';
+      lbl.textContent = FIELD_LABELS[key] || key;
+      const val = document.createElement('span');
+      val.className = 'field-value';
+      val.textContent = v;
+      row.appendChild(lbl); row.appendChild(val);
+      div.appendChild(row);
+    });
+  }
+
+  function renderMatches(matches) {
+    matchListEl.innerHTML = '';
+    matchesCountEl.textContent = `${matches.length} matches`;
+    matchesContainer.classList.remove('hidden');
+    const fields = selectedFields('tab-single');
+
+    const pairs = matches.map(m => {
+      const div = buildMatchItem(m, fields);
+      matchListEl.appendChild(div);
+      return { match: m, el: div };
+    });
+
+    applyMatchFilters();
+
+    // Progressively enrich each match with full Employee Info so the
+    // Manager / Shift / Status / Dept ID filters actually work.
+    enrichMatchesProgressively(pairs, fields);
+  }
+
+  async function enrichMatchesProgressively(pairs, fields) {
+    const myToken = ++enrichmentToken;
+    const wh = getWarehouse();
+    for (const { match, el } of pairs) {
+      if (myToken !== enrichmentToken) return; // superseded by a new search
+      // Already complete? Skip.
+      if (FILTER_FIELDS.every(k => match[k])) continue;
+      const id = match.login || match.employeeId || match.badge;
+      if (!id) continue;
+
+      let detail;
+      try {
+        detail = await lookupCached(id, wh, true);
+      } catch (_) {
+        continue;
+      }
+      if (myToken !== enrichmentToken) return;
+      if (!detail?.ok) continue;
+
+      // Merge — don't overwrite values already present from the search row.
+      Object.entries(detail.fields).forEach(([k, v]) => {
+        if (v && !match[k]) match[k] = v;
+      });
+      populateMatchItem(el, match, fields);
+      applyMatchFilters();
+
+      if (!detail.cached) {
+        await new Promise(r => setTimeout(r, REQUEST_DELAY_MS));
+      }
+    }
+  }
+
+  function applyMatchFilters() {
+    const f = {};
+    FILTER_FIELDS.forEach(k => {
+      f[k] = (document.getElementById('filter-' + k.toLowerCase()).value || '').trim().toLowerCase();
+    });
+    let visible = 0;
+    matchListEl.querySelectorAll('.match-item').forEach(el => {
+      const hide = FILTER_FIELDS.some(k => f[k] && !(el.dataset[k] || '').includes(f[k]));
+      el.classList.toggle('hidden-by-filter', !!hide);
+      if (!hide) visible += 1;
+    });
+    const total = matchListEl.children.length;
+    matchesCountEl.textContent = visible === total
+      ? `${total} matches`
+      : `${visible} of ${total} matches`;
+  }
+
+  FILTER_FIELDS.forEach(k => {
+    const el = document.getElementById('filter-' + k.toLowerCase());
+    if (el) el.addEventListener('input', applyMatchFilters);
+  });
+  document.getElementById('matches-clear').addEventListener('click', clearMatches);
 
   singleBtn.addEventListener('click', doSingleLookup);
   singleInput.addEventListener('keydown', (e) => {
@@ -325,14 +528,40 @@
     batchProgressText.textContent = `0 / ${items.length}`;
     batchErrorSummary.textContent = '';
 
+    const csvInputType = document.getElementById('csv-input-type').value;
     let errorCount = 0;
+    let ambiguousCount = 0;
     const wh = getWarehouse();
+
+    async function resolveItem(value) {
+      const useNameSearch = csvInputType === 'name'
+        || (csvInputType === 'auto' && window.FCLM.looksLikeName(value));
+      if (!useNameSearch) {
+        return await lookupCached(value, wh, true);
+      }
+      const sr = await searchCached(value, wh, true);
+      if (!sr.ok) return sr;
+      const matches = sr.matches || [];
+      if (matches.length === 0) {
+        return { ok: false, error: 'No matches', input: value };
+      }
+      if (matches.length > 1) {
+        return { ok: false, error: `${matches.length} matches — ambiguous`, input: value, ambiguous: true };
+      }
+      const id = matches[0].login || matches[0].employeeId || matches[0].badge;
+      if (id) {
+        const detail = await lookupCached(id, wh, true);
+        if (detail?.ok) return detail;
+      }
+      return { ok: true, input: value, fields: matches[0] };
+    }
+
     for (let i = 0; i < items.length; i++) {
       if (cancelBatch) break;
       const item = items[i];
       let res;
       try {
-        res = await lookupCached(item.value, wh, true);
+        res = await resolveItem(item.value);
       } catch (err) {
         res = { ok: false, error: err.message, input: item.value };
       }
@@ -340,8 +569,11 @@
         const target = enrichedRows[item.rowIndex + 1];
         fieldKeys.forEach(k => { target[fieldColIndexes[k]] = res.fields[k] || ''; });
       } else {
-        errorCount++;
-        batchErrorSummary.textContent = `${errorCount} error${errorCount === 1 ? '' : 's'} so far`;
+        if (res.ambiguous) ambiguousCount++; else errorCount++;
+        const parts = [];
+        if (errorCount) parts.push(`${errorCount} error${errorCount === 1 ? '' : 's'}`);
+        if (ambiguousCount) parts.push(`${ambiguousCount} ambiguous`);
+        batchErrorSummary.textContent = parts.join(' · ');
       }
       const done = i + 1;
       batchProgressFill.style.width = Math.round((done / items.length) * 100) + '%';

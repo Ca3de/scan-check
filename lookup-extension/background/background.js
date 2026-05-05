@@ -15,11 +15,13 @@ if (api.sidePanel?.setPanelBehavior) {
   api.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 }
 
-api.action?.onClicked?.addListener(async (tab) => {
+api.action?.onClicked?.addListener((tab) => {
+  // sidebarAction.open() / sidePanel.open() must be called synchronously
+  // from inside the user-gesture listener — no awaits before the call.
   if (api.sidebarAction?.open) {
-    try { await api.sidebarAction.open(); } catch (_) {}
-  } else if (api.sidePanel?.open) {
-    try { await api.sidePanel.open({ tabId: tab.id }); } catch (_) {}
+    api.sidebarAction.open().catch(() => {});
+  } else if (api.sidePanel?.open && tab?.id) {
+    api.sidePanel.open({ tabId: tab.id }).catch(() => {});
   }
 });
 
