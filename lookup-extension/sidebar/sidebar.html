@@ -57,6 +57,19 @@
     </div>
 
     <div id="single-result" class="result"></div>
+    <div id="single-matches" class="matches hidden">
+      <div class="matches-header">
+        <span id="matches-count">0 matches</span>
+        <button id="matches-clear" class="link">Clear</button>
+      </div>
+      <div class="match-filters">
+        <input type="text" id="filter-name" placeholder="Filter name">
+        <input type="text" id="filter-manager" placeholder="Filter manager">
+        <input type="text" id="filter-shift" placeholder="Filter shift">
+        <input type="text" id="filter-status" placeholder="Filter status">
+      </div>
+      <div id="match-list"></div>
+    </div>
   </section>
 
   <section id="tab-batch" class="tab-panel">
