@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FCLM Work Breakdown
 // @namespace    https://github.com/Ca3de/scan-check
-// @version      1.0.0
+// @version      1.1.0
 // @description  Shows percentage breakdown of work by size (Small/Medium/Large/HeavyBulky) and top processors per category on FCLM function rollup pages
 // @author       Ca3de
 // @match        https://fclm-portal.amazon.com/*
@@ -12,6 +12,17 @@
   'use strict';
 
   const PANEL_ID = 'fclm-work-breakdown-panel';
+  const STYLE_ID = 'fclm-work-breakdown-style';
+
+  let darkMode = localStorage.getItem('wb-dark-mode') !== 'false';
+
+  function computeTotalColumns(row) {
+    let total = 0;
+    for (const cell of row.querySelectorAll('th, td')) {
+      total += parseInt(cell.getAttribute('colspan')) || 1;
+    }
+    return total;
+  }
 
   function findUnitColumns(headerRows) {
     const columns = {
@@ -23,15 +34,14 @@
     if (!headerRows || headerRows.length === 0) return null;
 
     const totalCols = computeTotalColumns(headerRows[0]);
+    if (totalCols < 5) return null;
 
-    // Build a grid: for each header row, determine which cell occupies each column
-    // accounting for colspan and rowspan
-    const grid = []; // grid[row][col] = cell text
-    const cellSpans = []; // tracks rowspan coverage
+    const grid = [];
+    const cellSpans = [];
 
     for (let r = 0; r < headerRows.length; r++) {
       grid[r] = new Array(totalCols).fill('');
-      if (!cellSpans[r]) cellSpans[r] = new Array(totalCols).fill(false);
+      cellSpans[r] = new Array(totalCols).fill(false);
     }
 
     for (let r = 0; r < headerRows.length; r++) {
@@ -57,7 +67,6 @@
       }
     }
 
-    // Find login and name columns from the grid
     for (let c = 0; c < totalCols; c++) {
       for (let r = 0; r < grid.length; r++) {
         const lower = grid[r][c].toLowerCase();
@@ -66,7 +75,6 @@
       }
     }
 
-    // Find EACH-{Size} groups from any row
     const sizeGroups = {};
     for (let r = 0; r < grid.length; r++) {
       let c = 0;
@@ -90,7 +98,6 @@
 
     if (Object.keys(sizeGroups).length === 0) return null;
 
-    // Find UNIT columns in the last header row
     const lastRow = grid[grid.length - 1];
     for (let c = 0; c < totalCols; c++) {
       if (lastRow[c].toUpperCase() === 'UNIT') {
@@ -104,7 +111,6 @@
       }
     }
 
-    // Fallback: use the EACH group start columns directly
     if (Object.keys(columns.categories).length === 0) {
       for (const [size, range] of Object.entries(sizeGroups)) {
         if (size === 'Total') continue;
@@ -115,22 +121,12 @@
     return Object.keys(columns.categories).length > 0 ? columns : null;
   }
 
-  function computeTotalColumns(row) {
-    let total = 0;
-    for (const cell of row.querySelectorAll('th, td')) {
-      total += parseInt(cell.getAttribute('colspan')) || 1;
-    }
-    return total;
-  }
-
   function parseTable(table) {
     const rows = table.querySelectorAll('tr');
     if (rows.length < 3) return null;
 
-    // Find header rows (rows with th elements or header-like td)
     const headerRows = [];
     const dataRows = [];
-    let totalRow = null;
 
     for (const row of rows) {
       const ths = row.querySelectorAll('th');
@@ -140,9 +136,7 @@
         headerRows.push(row);
       } else if (tds.length > 0) {
         const firstCell = tds[0]?.textContent?.trim();
-        if (firstCell === 'Total') {
-          totalRow = row;
-        } else if (firstCell === 'AMZN' || firstCell === 'TEMP') {
+        if (firstCell && firstCell !== 'Total') {
           dataRows.push(row);
         }
       }
@@ -153,7 +147,6 @@
     const columns = findUnitColumns(headerRows);
     if (!columns) return null;
 
-    // Parse data rows
     const workers = [];
     const categoryTotals = {};
 
@@ -169,41 +162,37 @@
         units: {}
       };
 
-      // Get name
       if (columns.name >= 0 && columns.name < cells.length) {
         const nameCell = cells[columns.name];
         const nameLink = nameCell?.querySelector('a');
         worker.name = nameLink ? nameLink.textContent.trim() : nameCell?.textContent?.trim() || '';
       }
 
-      // Get login
       if (columns.login >= 0 && columns.login < cells.length) {
         worker.login = cells[columns.login]?.textContent?.trim() || '';
       }
 
-      // Get units per category
+      let hasAnyUnits = false;
       for (const [size, colIdx] of Object.entries(columns.categories)) {
         if (colIdx < cells.length) {
           const val = parseFloat(cells[colIdx]?.textContent?.trim()) || 0;
           worker.units[size] = val;
           categoryTotals[size] += val;
+          if (val > 0) hasAnyUnits = true;
         }
       }
 
-      workers.push(worker);
+      if (hasAnyUnits) workers.push(worker);
     }
 
-    // Calculate grand total
     const grandTotal = Object.values(categoryTotals).reduce((s, v) => s + v, 0);
     if (grandTotal === 0) return null;
 
-    // Calculate percentages and find top processors
     const breakdown = [];
     for (const size of Object.keys(columns.categories)) {
       const total = categoryTotals[size];
       const pct = ((total / grandTotal) * 100).toFixed(1);
 
-      // Find top processor
       let topWorker = { name: '-', login: '-', units: 0 };
       for (const w of workers) {
         if ((w.units[size] || 0) > topWorker.units) {
@@ -218,19 +207,79 @@
   }
 
   function findSectionName(table) {
-    // Look for section header before the table (e.g., "Stow C Returns [4300006823]")
     let prev = table.previousElementSibling;
     for (let i = 0; i < 5 && prev; i++) {
       const text = prev.textContent.trim();
-      if (text.includes('[') && /\[\d+\]/.test(text)) {
+      if (text.length < 200 && /\[\d+\]/.test(text)) {
         return text.replace(/\s*\[\d+\].*/, '').trim();
       }
       prev = prev.previousElementSibling;
     }
-    // Check table itself
-    const text = table.textContent;
-    const match = text.match(/([A-Za-z_ ]+)\s*\[\d+\]/);
-    return match ? match[1].trim() : 'Unknown';
+    const headerRow = table.querySelector('tr');
+    if (headerRow) {
+      const firstCell = headerRow.querySelector('th, td');
+      if (firstCell) {
+        const text = firstCell.textContent.trim();
+        if (text.length > 0 && text.length < 100 && !/^(Type|ID|Name|Login|AMZN|TEMP)$/i.test(text)) {
+          return text;
+        }
+      }
+    }
+    return 'Unknown';
+  }
+
+  function getStyles() {
+    const d = darkMode;
+    return `
+      #${PANEL_ID} {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        width: 320px;
+        background: ${d ? '#1a1a2e' : '#ffffff'};
+        border-radius: 8px;
+        box-shadow: 0 4px 20px ${d ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.15)'};
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: ${d ? '#fff' : '#1a1a2e'};
+        z-index: 999999;
+        overflow: hidden;
+      }
+      #${PANEL_ID}.minimized .wb-body { display: none; }
+      #${PANEL_ID}.minimized { width: auto; }
+      .wb-header {
+        background: ${d ? '#16213e' : '#e8eaf0'};
+        padding: 10px 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: move;
+      }
+      .wb-title { font-size: 13px; font-weight: 600; flex-grow: 1; }
+      .wb-close, .wb-refresh, .wb-theme {
+        background: none; border: none; color: ${d ? '#888' : '#666'}; cursor: pointer;
+        font-size: 14px; padding: 0 4px;
+      }
+      .wb-close:hover, .wb-refresh:hover, .wb-theme:hover { color: ${d ? '#fff' : '#000'}; }
+      .wb-body { padding: 12px; max-height: 70vh; overflow-y: auto; }
+      .wb-section { margin-bottom: 16px; }
+      .wb-section:last-child { margin-bottom: 0; }
+      .wb-section-title { font-size: 13px; font-weight: 600; color: #ff9900; margin-bottom: 4px; }
+      .wb-total { font-size: 10px; color: ${d ? '#888' : '#777'}; margin-bottom: 8px; }
+      .wb-bars { margin-bottom: 8px; }
+      .wb-bar-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+      .wb-bar-label { font-size: 11px; width: 75px; color: ${d ? '#ccc' : '#444'}; }
+      .wb-bar-track { flex: 1; height: 14px; background: ${d ? '#0f0f1a' : '#e0e0e0'}; border-radius: 3px; overflow: hidden; }
+      .wb-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+      .wb-bar-pct { font-size: 11px; width: 40px; text-align: right; font-weight: 600; }
+      .wb-bar-count { font-size: 10px; color: ${d ? '#666' : '#888'}; width: 55px; text-align: right; }
+      .wb-top-title { font-size: 10px; color: ${d ? '#888' : '#777'}; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+      .wb-top-list { background: ${d ? '#0f0f1a' : '#f0f1f3'}; border-radius: 4px; padding: 6px 8px; }
+      .wb-top-item { font-size: 11px; padding: 2px 0; display: flex; gap: 6px; }
+      .wb-top-cat { font-weight: 600; width: 75px; }
+      .wb-top-name { color: ${d ? '#fff' : '#1a1a2e'}; flex: 1; }
+      .wb-top-units { color: ${d ? '#666' : '#888'}; }
+      .wb-empty { text-align: center; color: ${d ? '#666' : '#999'}; font-size: 12px; padding: 20px 0; }
+    `;
   }
 
   function createPanel(sections) {
@@ -285,78 +334,38 @@
     panel.innerHTML = `
       <div class="wb-header">
         <span class="wb-title">Work Breakdown</span>
+        <button class="wb-theme" id="wb-theme" title="Toggle light/dark mode">${darkMode ? '☀' : '☾'}</button>
         <button class="wb-refresh" id="wb-refresh" title="Refresh">↻</button>
         <button class="wb-close" id="wb-close" title="Minimize">_</button>
       </div>
       <div class="wb-body" id="wb-body">${html || '<div class="wb-empty">No unit data found on this page</div>'}</div>
     `;
 
-    const style = document.createElement('style');
-    style.textContent = `
-      #${PANEL_ID} {
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        width: 320px;
-        background: #1a1a2e;
-        border-radius: 8px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        color: #fff;
-        z-index: 999999;
-        overflow: hidden;
-      }
-      #${PANEL_ID}.minimized .wb-body { display: none; }
-      #${PANEL_ID}.minimized { width: auto; }
-      .wb-header {
-        background: #16213e;
-        padding: 10px 12px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        cursor: move;
-      }
-      .wb-title { font-size: 13px; font-weight: 600; flex-grow: 1; }
-      .wb-close, .wb-refresh {
-        background: none; border: none; color: #888; cursor: pointer;
-        font-size: 14px; padding: 0 4px;
-      }
-      .wb-close:hover, .wb-refresh:hover { color: #fff; }
-      .wb-body { padding: 12px; max-height: 70vh; overflow-y: auto; }
-      .wb-section { margin-bottom: 16px; }
-      .wb-section:last-child { margin-bottom: 0; }
-      .wb-section-title { font-size: 13px; font-weight: 600; color: #ff9900; margin-bottom: 4px; }
-      .wb-total { font-size: 10px; color: #888; margin-bottom: 8px; }
-      .wb-bars { margin-bottom: 8px; }
-      .wb-bar-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-      .wb-bar-label { font-size: 11px; width: 75px; color: #ccc; }
-      .wb-bar-track { flex: 1; height: 14px; background: #0f0f1a; border-radius: 3px; overflow: hidden; }
-      .wb-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
-      .wb-bar-pct { font-size: 11px; width: 40px; text-align: right; font-weight: 600; }
-      .wb-bar-count { font-size: 10px; color: #666; width: 55px; text-align: right; }
-      .wb-top-title { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-      .wb-top-list { background: #0f0f1a; border-radius: 4px; padding: 6px 8px; }
-      .wb-top-item { font-size: 11px; padding: 2px 0; display: flex; gap: 6px; }
-      .wb-top-cat { font-weight: 600; width: 75px; }
-      .wb-top-name { color: #fff; flex: 1; }
-      .wb-top-units { color: #666; }
-      .wb-empty { text-align: center; color: #666; font-size: 12px; padding: 20px 0; }
-    `;
+    let styleEl = document.getElementById(STYLE_ID);
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = STYLE_ID;
+      document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = getStyles();
 
-    document.head.appendChild(style);
     document.body.appendChild(panel);
 
-    // Minimize toggle
     document.getElementById('wb-close').addEventListener('click', () => {
       panel.classList.toggle('minimized');
     });
 
-    // Refresh
     document.getElementById('wb-refresh').addEventListener('click', () => {
       analyze();
     });
 
-    // Draggable
+    document.getElementById('wb-theme').addEventListener('click', () => {
+      darkMode = !darkMode;
+      localStorage.setItem('wb-dark-mode', darkMode);
+      styleEl.textContent = getStyles();
+      document.getElementById('wb-theme').textContent = darkMode ? '☀' : '☾';
+    });
+
     const header = panel.querySelector('.wb-header');
     let dragging = false, ox, oy;
     header.addEventListener('mousedown', (e) => {
@@ -377,13 +386,17 @@
   function analyze() {
     const tables = document.querySelectorAll('table');
     const sections = [];
+    const seenTotals = new Set();
 
     for (const table of tables) {
-      // Skip tables that are just wrappers
       if (table.querySelector('table')) continue;
 
       const data = parseTable(table);
       if (data) {
+        const key = data.grandTotal + '-' + data.workerCount;
+        if (seenTotals.has(key)) continue;
+        seenTotals.add(key);
+
         const name = findSectionName(table);
         sections.push({ name, data });
       }
@@ -392,22 +405,18 @@
     createPanel(sections);
   }
 
-  // Run analysis after page load, with retries for dynamic content
   function init() {
-    // Only run on pages that look like function rollup reports
     if (document.querySelector('table')) {
       analyze();
     }
   }
 
-  // Wait for page to be ready
   if (document.readyState === 'complete') {
     setTimeout(init, 1000);
   } else {
     window.addEventListener('load', () => setTimeout(init, 1000));
   }
 
-  // Re-analyze when page content changes (FCLM loads data dynamically)
   const observer = new MutationObserver(() => {
     clearTimeout(observer._debounce);
     observer._debounce = setTimeout(() => {
