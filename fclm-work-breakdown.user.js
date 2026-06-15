@@ -14,106 +14,97 @@
   const PANEL_ID = 'fclm-work-breakdown-panel';
 
   function findUnitColumns(headerRows) {
-    // Find column indices for EACH-Small UNIT, EACH-Medium UNIT, etc.
-    // The header typically has two rows:
-    //   Row 1: grouped headers (EachStowed spanning multiple cols)
-    //   Row 2: UNIT / UPH sub-headers
-    // We need to find columns labeled "UNIT" under each EACH-{size} group
-
     const columns = {
       login: -1,
       name: -1,
-      categories: {} // { 'Small': unitColIndex, 'Medium': unitColIndex, ... }
+      categories: {}
     };
 
     if (!headerRows || headerRows.length === 0) return null;
 
-    // Strategy: scan ALL header cells across all rows to build a column map
-    // Track which "EACH-{Size}" group we're in, then find UNIT columns within it
-    const firstRow = headerRows[0];
-    const allCells = firstRow.querySelectorAll('th, td');
+    const totalCols = computeTotalColumns(headerRows[0]);
 
-    // Build a flat column map accounting for colspans
-    let colPosition = 0;
-    const colMap = []; // [{text, startCol, endCol}]
+    // Build a grid: for each header row, determine which cell occupies each column
+    // accounting for colspan and rowspan
+    const grid = []; // grid[row][col] = cell text
+    const cellSpans = []; // tracks rowspan coverage
 
-    for (const cell of allCells) {
-      const text = cell.textContent.trim();
-      const colspan = parseInt(cell.getAttribute('colspan')) || 1;
-      colMap.push({ text, startCol: colPosition, endCol: colPosition + colspan - 1 });
-
-      // Find login and name columns
-      const lower = text.toLowerCase();
-      if (lower === 'login') columns.login = colPosition;
-      if (lower === 'name') columns.name = colPosition;
-
-      colPosition += colspan;
+    for (let r = 0; r < headerRows.length; r++) {
+      grid[r] = new Array(totalCols).fill('');
+      if (!cellSpans[r]) cellSpans[r] = new Array(totalCols).fill(false);
     }
 
-    // Find EACH-{Size} groups from first header row
-    const sizeGroups = {}; // { 'Small': {start, end}, ... }
-    for (const entry of colMap) {
-      const match = entry.text.match(/EACH[- ]?(Small|Medium|Large|HeavyBulky|Total)/i);
-      if (match) {
-        const size = match[1];
-        sizeGroups[size] = { start: entry.startCol, end: entry.endCol };
+    for (let r = 0; r < headerRows.length; r++) {
+      const cells = headerRows[r].querySelectorAll('th, td');
+      let col = 0;
+      for (const cell of cells) {
+        while (col < totalCols && cellSpans[r][col]) col++;
+        if (col >= totalCols) break;
+
+        const text = cell.textContent.trim();
+        const colspan = parseInt(cell.getAttribute('colspan')) || 1;
+        const rowspan = parseInt(cell.getAttribute('rowspan')) || 1;
+
+        for (let dr = 0; dr < rowspan; dr++) {
+          for (let dc = 0; dc < colspan; dc++) {
+            if (r + dr < headerRows.length && col + dc < totalCols) {
+              grid[r + dr][col + dc] = text;
+              if (dr > 0) cellSpans[r + dr][col + dc] = true;
+            }
+          }
+        }
+        col += colspan;
       }
     }
 
-    // If no EACH groups found in first row, try looking for them differently
+    // Find login and name columns from the grid
+    for (let c = 0; c < totalCols; c++) {
+      for (let r = 0; r < grid.length; r++) {
+        const lower = grid[r][c].toLowerCase();
+        if (lower === 'login') columns.login = c;
+        if (lower === 'name') columns.name = c;
+      }
+    }
+
+    // Find EACH-{Size} groups from any row
+    const sizeGroups = {};
+    for (let r = 0; r < grid.length; r++) {
+      let c = 0;
+      while (c < totalCols) {
+        const text = grid[r][c];
+        const match = text.match(/EACH[- ]?(Small|Medium|Large|HeavyBulky|Total)/i);
+        if (match) {
+          const size = match[1];
+          const start = c;
+          let end = c;
+          while (end + 1 < totalCols && grid[r][end + 1] === text) end++;
+          if (!sizeGroups[size]) {
+            sizeGroups[size] = { start, end };
+          }
+          c = end + 1;
+        } else {
+          c++;
+        }
+      }
+    }
+
     if (Object.keys(sizeGroups).length === 0) return null;
 
-    // Now find UNIT columns in the second header row
-    if (headerRows.length >= 2) {
-      const secondRow = headerRows[1];
-      const subCells = secondRow.querySelectorAll('th, td');
-      let subCol = 0;
-
-      // Account for cells that span from the first row
-      // The second row starts where first-row cells with rowspan=1 left gaps
-      // Simpler approach: count through second row cells and match to column positions
-
-      // First, figure out which columns are NOT covered by rowspan from first row
-      const coveredByRowspan = new Set();
-      for (const cell of allCells) {
-        const rowspan = parseInt(cell.getAttribute('rowspan')) || 1;
-        if (rowspan > 1) {
-          const colspan = parseInt(cell.getAttribute('colspan')) || 1;
-          const startCol = colMap.find(e => e.text === cell.textContent.trim())?.startCol;
-          if (startCol !== undefined) {
-            for (let c = startCol; c < startCol + colspan; c++) {
-              coveredByRowspan.add(c);
-            }
+    // Find UNIT columns in the last header row
+    const lastRow = grid[grid.length - 1];
+    for (let c = 0; c < totalCols; c++) {
+      if (lastRow[c].toUpperCase() === 'UNIT') {
+        for (const [size, range] of Object.entries(sizeGroups)) {
+          if (size === 'Total') continue;
+          if (c >= range.start && c <= range.end) {
+            columns.categories[size] = c;
+            break;
           }
         }
-      }
-
-      // Map second row cells to actual column positions
-      let actualCol = 0;
-      for (const cell of subCells) {
-        // Skip columns covered by rowspan from first row
-        while (coveredByRowspan.has(actualCol)) actualCol++;
-
-        const text = cell.textContent.trim().toUpperCase();
-        const colspan = parseInt(cell.getAttribute('colspan')) || 1;
-
-        if (text === 'UNIT') {
-          // Which size group does this UNIT column belong to?
-          for (const [size, range] of Object.entries(sizeGroups)) {
-            if (size === 'Total') continue;
-            if (actualCol >= range.start && actualCol <= range.end) {
-              columns.categories[size] = actualCol;
-              break;
-            }
-          }
-        }
-
-        actualCol += colspan;
       }
     }
 
-    // If we couldn't find UNIT sub-columns, try using the EACH group start columns directly
-    // (some tables may not have UNIT/UPH split)
+    // Fallback: use the EACH group start columns directly
     if (Object.keys(columns.categories).length === 0) {
       for (const [size, range] of Object.entries(sizeGroups)) {
         if (size === 'Total') continue;
@@ -122,6 +113,14 @@
     }
 
     return Object.keys(columns.categories).length > 0 ? columns : null;
+  }
+
+  function computeTotalColumns(row) {
+    let total = 0;
+    for (const cell of row.querySelectorAll('th, td')) {
+      total += parseInt(cell.getAttribute('colspan')) || 1;
+    }
+    return total;
   }
 
   function parseTable(table) {
