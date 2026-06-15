@@ -122,25 +122,12 @@
   }
 
   function parseTable(table) {
-    const rows = table.querySelectorAll('tr');
-    if (rows.length < 3) return null;
+    const thead = table.querySelector('thead');
+    const tbody = table.querySelector('tbody');
+    if (!thead || !tbody) return null;
 
-    const headerRows = [];
-    const dataRows = [];
-
-    for (const row of rows) {
-      const ths = row.querySelectorAll('th');
-      const tds = row.querySelectorAll('td');
-
-      if (ths.length > 0) {
-        headerRows.push(row);
-      } else if (tds.length > 0) {
-        const firstCell = tds[0]?.textContent?.trim();
-        if (firstCell && firstCell !== 'Total') {
-          dataRows.push(row);
-        }
-      }
-    }
+    const headerRows = Array.from(thead.querySelectorAll('tr'));
+    const dataRows = Array.from(tbody.querySelectorAll('tr'));
 
     if (headerRows.length === 0 || dataRows.length === 0) return null;
 
@@ -207,7 +194,14 @@
   }
 
   function findSectionName(table) {
-    // Walk up the DOM checking previous siblings at each level
+    const caption = table.querySelector('caption');
+    if (caption) {
+      const text = caption.textContent.trim();
+      const match = text.match(/^(.+?)\s*\[\d+\]/);
+      if (match) return match[1].trim();
+      const short = text.split('\n')[0].trim();
+      if (short.length > 0 && short.length < 100) return short;
+    }
     let el = table;
     for (let depth = 0; depth < 5 && el; depth++) {
       let prev = el.previousElementSibling;
