@@ -47,7 +47,8 @@
     'Water Spider',      // Generic Water Spider (covers CRET)
     'WHD Waterspider',   // WHD Water Spider variant
     'WHD Water Spider',  // WHD Water Spider with space
-    'Team_Mech_Wspider'  // CRET Support Team Mech Water Spider
+    'Team_Mech_Wspider', // CRET Support Team Mech Water Spider
+    'Stow_WaterSpider'   // Stow Water Spider (TEST ONLY)
   ];
   const PATH_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
@@ -1369,7 +1370,8 @@
       header.className = 'fc-lt-path-name';
       // Shorten path names for display
       let shortName = pathName;
-      if (pathName.includes('Team_Mech_Wspider')) shortName = 'TMWSP';
+      if (pathName.includes('Stow_WaterSpider')) shortName = 'STWSWP';
+      else if (pathName.includes('Team_Mech_Wspider')) shortName = 'TMWSP';
       else if (pathName === 'Water Spider') shortName = 'CRSDCNTF';
       else if (pathName.includes('WHD')) shortName = 'WHDWTSP';
       else if (pathName.includes('WaterSpider')) shortName = 'VRWS';
@@ -1708,7 +1710,8 @@
     'Water Spider': ['CRSDCNTF'],           // CRET Water Spider
     'WHD Waterspider': ['WHDWTSP'],         // WHD Water Spider
     'WHD Water Spider': ['WHDWTSP'],        // WHD Water Spider (with space)
-    'Team_Mech_Wspider': ['TMWSP']          // CRET Support Team Mech Water Spider
+    'Team_Mech_Wspider': ['TMWSP'],         // CRET Support Team Mech Water Spider
+    'Stow_WaterSpider': ['STWSWP']          // Stow Water Spider (TEST ONLY)
   };
 
   // Max time allowed on a restricted path (4 hours 30 minutes in minutes)
