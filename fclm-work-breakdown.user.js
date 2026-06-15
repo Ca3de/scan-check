@@ -207,23 +207,18 @@
   }
 
   function findSectionName(table) {
-    let prev = table.previousElementSibling;
-    for (let i = 0; i < 5 && prev; i++) {
-      const text = prev.textContent.trim();
-      if (text.length < 200 && /\[\d+\]/.test(text)) {
-        return text.replace(/\s*\[\d+\].*/, '').trim();
-      }
-      prev = prev.previousElementSibling;
-    }
-    const headerRow = table.querySelector('tr');
-    if (headerRow) {
-      const firstCell = headerRow.querySelector('th, td');
-      if (firstCell) {
-        const text = firstCell.textContent.trim();
-        if (text.length > 0 && text.length < 100 && !/^(Type|ID|Name|Login|AMZN|TEMP)$/i.test(text)) {
-          return text;
+    // Walk up the DOM checking previous siblings at each level
+    let el = table;
+    for (let depth = 0; depth < 5 && el; depth++) {
+      let prev = el.previousElementSibling;
+      for (let i = 0; i < 8 && prev; i++) {
+        const text = prev.textContent.trim();
+        if (text.length < 200 && /\[\d+\]/.test(text)) {
+          return text.replace(/\s*\[\d+\].*/, '').trim();
         }
+        prev = prev.previousElementSibling;
       }
+      el = el.parentElement;
     }
     return 'Unknown';
   }
