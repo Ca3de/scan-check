@@ -234,6 +234,26 @@
           <button id="fc-lt-back" class="fc-lt-btn secondary">Back</button>
         </div>
         <div class="fc-lt-message hidden" id="fc-lt-message"></div>
+        <div class="fc-lt-codes-drawer" id="fc-lt-codes-drawer">
+          <div class="fc-lt-codes-toggle" id="fc-lt-codes-toggle">
+            <span>CALM Codes Reference</span>
+            <span class="fc-lt-codes-arrow" id="fc-lt-codes-arrow">&#9654;</span>
+          </div>
+          <div class="fc-lt-codes-list hidden" id="fc-lt-codes-list">
+            <div class="fc-lt-code-item">
+              <span class="fc-lt-code-key">STWSWP</span>
+              <span class="fc-lt-code-desc">Stow sweep for CRET support AAs</span>
+            </div>
+            <div class="fc-lt-code-item">
+              <span class="fc-lt-code-key">VRWS</span>
+              <span class="fc-lt-code-desc">Vret Waterspider AAs</span>
+            </div>
+            <div class="fc-lt-code-item">
+              <span class="fc-lt-code-key">LVRET</span>
+              <span class="fc-lt-code-desc">Lead vret for Vret PA roles</span>
+            </div>
+          </div>
+        </div>
       </div>
     `;
 
@@ -597,6 +617,58 @@
         color: #e74c3c;
         font-weight: 600;
       }
+      .fc-lt-codes-drawer {
+        margin-top: 10px;
+        border-top: 1px solid #2a2a4a;
+        padding-top: 6px;
+      }
+      .fc-lt-codes-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        padding: 6px 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #ff9900;
+        user-select: none;
+      }
+      .fc-lt-codes-toggle:hover {
+        color: #ffb340;
+      }
+      .fc-lt-codes-arrow {
+        font-size: 9px;
+        transition: transform 0.2s;
+      }
+      .fc-lt-codes-arrow.open {
+        transform: rotate(90deg);
+      }
+      .fc-lt-codes-list {
+        padding: 4px 0;
+      }
+      .fc-lt-codes-list.hidden {
+        display: none;
+      }
+      .fc-lt-code-item {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 4px 6px;
+        font-size: 11px;
+        border-bottom: 1px solid #1a1a2e;
+      }
+      .fc-lt-code-item:last-child {
+        border-bottom: none;
+      }
+      .fc-lt-code-key {
+        color: #3b82f6;
+        font-weight: 600;
+        font-family: monospace;
+        min-width: 60px;
+      }
+      .fc-lt-code-desc {
+        color: #aaa;
+      }
     `;
 
     document.head.appendChild(styles);
@@ -690,6 +762,17 @@
       e.stopPropagation();
       toggleExtension();
     });
+
+    // CALM Codes drawer toggle
+    const codesToggle = document.getElementById('fc-lt-codes-toggle');
+    const codesList = document.getElementById('fc-lt-codes-list');
+    const codesArrow = document.getElementById('fc-lt-codes-arrow');
+    if (codesToggle) {
+      codesToggle.addEventListener('click', () => {
+        codesList.classList.toggle('hidden');
+        codesArrow.classList.toggle('open');
+      });
+    }
 
     // Work code input with suggestions
     workCodeInput.addEventListener('input', () => {
